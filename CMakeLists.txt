@@ -17,13 +17,16 @@ FetchContent_Declare(omdrop_owl
 FetchContent_MakeAvailable(omdrop_owl)
 file(GLOB OWL_PATCHES ${omdrop_owl_SOURCE_DIR}/patches/owl-*.patch)
 list(SORT OWL_PATCHES)
+# Our fixes to OWL, applied after omdrop-owl's (patches/README.md says why each exists).
+file(GLOB WIN_PATCHES ${CMAKE_CURRENT_SOURCE_DIR}/patches/win-*.patch)
+list(SORT WIN_PATCHES)
 
 FetchContent_Declare(owl
     GIT_REPOSITORY https://github.com/jedbillyb/owl.git
     GIT_TAG 832d70f815c3d4a06a02117bf0fc5e868daa1ff0
     GIT_SUBMODULES radiotap   # OWL's bundled googletest (2018) doesn't build with current compilers
     GIT_CONFIG core.autocrlf=false
-    PATCH_COMMAND git apply ${OWL_PATCHES}
+    PATCH_COMMAND git apply ${OWL_PATCHES} ${WIN_PATCHES}
     UPDATE_DISCONNECTED ON)
 FetchContent_GetProperties(owl)
 if (NOT owl_POPULATED)
@@ -42,6 +45,9 @@ set(OWL ${owl_SOURCE_DIR})
 add_library(radiotap STATIC ${OWL}/radiotap/radiotap.c)
 target_include_directories(radiotap PUBLIC ${OWL}/radiotap compat)
 target_compile_definitions(radiotap PRIVATE RADIOTAP_SUPPORT_OVERRIDES)
+# It casts pointers to 32-bit `unsigned long` (LLP64), but only to subtract two
+# of them, which wraps to the right offset for headers far under 4 GB.
+target_compile_options(radiotap PRIVATE -Wno-pointer-to-int-cast -Wno-address-of-packed-member)
 
 # OWL's portable core: frames, TLVs, sync, election, channel sequence, peers.
 add_library(awdl STATIC
@@ -50,7 +56,9 @@ add_library(awdl STATIC
     ${OWL}/src/frame.c ${OWL}/src/crc32.c ${OWL}/src/wire.c ${OWL}/src/peers.c
     ${OWL}/src/version.c ${OWL}/src/hashmap.c ${OWL}/src/siphash24.c
     ${OWL}/src/circular_buffer.c
-    compat/compat.c)
+    compat/compat.c compat/clock.c)
+set_source_files_properties(${OWL}/src/state.c PROPERTIES
+    COMPILE_DEFINITIONS clock_time_us=owl_clock_monotonic_us)
 target_include_directories(awdl PUBLIC ${OWL}/src compat)
 target_link_libraries(awdl PUBLIC radiotap)
 # radiotap.h assumes <stdint.h> arrives via glibc headers; MinGW's localtime_r is behind this macro.
@@ -60,12 +68,17 @@ target_compile_definitions(awdl PRIVATE _POSIX_THREAD_SAFE_FUNCTIONS)
 add_library(radio_mock STATIC radio/mock_radio.c)
 target_include_directories(radio_mock PUBLIC radio)
 
+# Replaces OWL's daemon/core.c timing loop; no libev/libpcap/TAP.
+add_library(awdl_sched STATIC sched/awdl_sched.c)
+target_include_directories(awdl_sched PUBLIC sched radio)
+target_link_libraries(awdl_sched PUBLIC awdl)
+
 enable_testing()
 add_executable(owl_tests
     ${OWL}/tests/test_wire.cpp ${OWL}/tests/test_awdl_sync.cpp
     ${OWL}/tests/test_awdl_peers.cpp ${OWL}/tests/test_awdl_election.cpp
     ${OWL}/tests/test_awdl_channel.cpp ${OWL}/tests/test_awdl_txgate.cpp
-    tests/test_mock_radio.cpp)
-target_link_libraries(owl_tests awdl radio_mock GTest::gtest_main)
+    tests/test_mock_radio.cpp tests/test_sched.cpp)
+target_link_libraries(owl_tests awdl_sched radio_mock GTest::gtest_main)
 include(GoogleTest)
 gtest_discover_tests(owl_tests)

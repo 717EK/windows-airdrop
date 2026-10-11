@@ -1,0 +1,10 @@
+--- a/src/rx.c	2026-10-11 09:48:34.431037800 -0700
++++ b/src/rx.c	2026-10-11 09:48:34.585919800 -0700
+@@ -398,6 +398,7 @@
+ 	offset += write_be16(**out, offset, ether_type);
+ 	/* TODO avoid copying bytes */
+ 	offset += write_bytes(**out, offset, buf_data(frame), buf_len(frame));
++	buf_take(**out, buf_len(**out) - offset); /* the buffer was allocated at ETHER_MAX_LEN */
+ 
+ 	(*out)++;
+ 

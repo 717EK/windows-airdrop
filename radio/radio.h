@@ -29,7 +29,8 @@ struct RadioBackend {
 };
 
 /* Mock: every endpoint on one shared in-memory medium hears every frame the
- * others transmit on the same channel. No timing, loss or ACKs. */
+ * others transmit on the same channel. No timing, loss or ACKs. The medium is
+ * a ring: an endpoint that falls more than MOCK_MEDIUM_FRAMES behind loses the oldest. */
 #define MOCK_MEDIUM_FRAMES 64
 #define MOCK_FRAME_MAX 2048
 
@@ -42,7 +43,7 @@ struct mock_frame {
 
 struct mock_medium {
 	struct mock_frame frames[MOCK_MEDIUM_FRAMES];
-	unsigned int count;
+	unsigned int count; /* frames ever sent; frame i lives at frames[i % MOCK_MEDIUM_FRAMES] */
 };
 
 struct mock_radio {

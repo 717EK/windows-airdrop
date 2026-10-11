@@ -12,8 +12,10 @@ static int mock_capture(void *ctx, unsigned char *buf, unsigned int cap) {
 	struct mock_radio *r = ctx;
 	if (!r->is_open)
 		return -1;
+	if (r->medium->count - r->next > MOCK_MEDIUM_FRAMES)
+		r->next = r->medium->count - MOCK_MEDIUM_FRAMES; /* overrun: skip what was overwritten */
 	while (r->next < r->medium->count) {
-		const struct mock_frame *f = &r->medium->frames[r->next++];
+		const struct mock_frame *f = &r->medium->frames[r->next++ % MOCK_MEDIUM_FRAMES];
 		if (f->sender == r->id || f->channel != r->channel)
 			continue;
 		if (f->len > cap)
@@ -27,10 +29,9 @@ static int mock_capture(void *ctx, unsigned char *buf, unsigned int cap) {
 static int mock_transmit(void *ctx, const unsigned char *frame, unsigned int len) {
 	struct mock_radio *r = ctx;
 	struct mock_medium *m = r->medium;
-	/* ponytail: fixed-size medium, a ring buffer if a test ever needs more than 64 frames */
-	if (!r->is_open || len > MOCK_FRAME_MAX || m->count == MOCK_MEDIUM_FRAMES)
+	if (!r->is_open || len > MOCK_FRAME_MAX)
 		return -1;
-	struct mock_frame *f = &m->frames[m->count++];
+	struct mock_frame *f = &m->frames[m->count++ % MOCK_MEDIUM_FRAMES];
 	f->sender = r->id;
 	f->channel = r->channel;
 	f->len = len;
