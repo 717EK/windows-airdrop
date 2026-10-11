@@ -5,6 +5,7 @@ A research harness for the Windows AirDrop development plan. It builds OWL's AWD
 - Audit and findings: [docs/section16-audit.md](docs/section16-audit.md)
 - The scheduler that replaces OWL's Linux event loop: `sched/` ([docs/scheduler.md](docs/scheduler.md))
 - Radio interface and mock: `radio/`
+- Virtual adapter (`awdl0` via TAP-Windows6, IPv6 neighbours via IP Helper): `netif/` ([docs/virtual-adapter.md](docs/virtual-adapter.md))
 - POSIX stand-ins for OWL's core, plus a clock that tests can replace: `compat/`
 - Our fixes to OWL: `patches/`
 - Bluetooth test (can Windows broadcast and hear Apple's AirDrop signal?): `tools/bleprobe` ([docs/bluetooth-test.md](docs/bluetooth-test.md))

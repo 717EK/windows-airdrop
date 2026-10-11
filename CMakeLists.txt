@@ -73,12 +73,18 @@ add_library(awdl_sched STATIC sched/awdl_sched.c)
 target_include_directories(awdl_sched PUBLIC sched radio)
 target_link_libraries(awdl_sched PUBLIC awdl)
 
+# awdl0 on Windows: TAP-Windows6 + IP Helper neighbour/address tables.
+add_library(awdl_netif STATIC netif/awdl_netif_win.c)
+target_include_directories(awdl_netif PUBLIC netif compat)
+target_compile_definitions(awdl_netif PRIVATE _WIN32_WINNT=0x0A00)
+target_link_libraries(awdl_netif PUBLIC iphlpapi ws2_32)
+
 enable_testing()
 add_executable(owl_tests
     ${OWL}/tests/test_wire.cpp ${OWL}/tests/test_awdl_sync.cpp
     ${OWL}/tests/test_awdl_peers.cpp ${OWL}/tests/test_awdl_election.cpp
     ${OWL}/tests/test_awdl_channel.cpp ${OWL}/tests/test_awdl_txgate.cpp
-    tests/test_mock_radio.cpp tests/test_sched.cpp)
-target_link_libraries(owl_tests awdl_sched radio_mock GTest::gtest_main)
+    tests/test_mock_radio.cpp tests/test_sched.cpp tests/test_netif.cpp)
+target_link_libraries(owl_tests awdl_sched radio_mock awdl_netif GTest::gtest_main)
 include(GoogleTest)
 gtest_discover_tests(owl_tests)
