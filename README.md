@@ -7,6 +7,7 @@ A research harness for the Windows AirDrop development plan. It builds OWL's AWD
 - Radio interface and mock: `radio/`
 - POSIX stand-ins for OWL's core, plus a clock that tests can replace: `compat/`
 - Our fixes to OWL: `patches/`
+- Bluetooth test (can Windows broadcast and hear Apple's AirDrop signal?): `tools/bleprobe` ([docs/bluetooth-test.md](docs/bluetooth-test.md))
 
 ```bash
 scoop install cmake ninja mingw

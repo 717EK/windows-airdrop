@@ -1,1 +1,3 @@
 build/
+tools/bleprobe/bin/
+tools/bleprobe/obj/
