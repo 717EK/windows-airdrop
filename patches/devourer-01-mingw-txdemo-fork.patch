@@ -1,0 +1,25 @@
+diff --git a/examples/tx/main.cpp b/examples/tx/main.cpp
+index 0dc36a0..a76b02e 100644
+--- a/examples/tx/main.cpp
++++ b/examples/tx/main.cpp
+@@ -24,6 +24,11 @@
+   typedef int pid_t;
+   #define fork() (0)
+   #define sleep(seconds) Sleep((seconds)*1000)
++#elif defined(__MINGW32__)
++  /* MinGW has unistd.h and pid_t but no fork(): same stub as MSVC. */
++  #include <libusb.h>
++  #include <unistd.h>
++  #define fork() (0)
+ #elif defined(__ANDROID__)
+   #include <libusb.h>
+ #elif defined(__APPLE__)
+@@ -1026,7 +1031,7 @@ int main(int argc, char **argv) {
+   if (tx_with_rx && !rx_thread_mode) {
+     pid_t fpid = fork();
+     if (fpid == 0) {
+-#if !defined(_MSC_VER) /* fork() is a real fork here, not the (0) stub */
++#if !defined(_MSC_VER) && !defined(__MINGW32__) /* fork() is a real fork here, not the (0) stub */
+       /* The post-fork rule: the child holds copies of the parent's objects -
+        * the IN-drainer std::threads among them, joinable copies of threads
+        * that do not exist here - so it must run no destructor. It flushes
