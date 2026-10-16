@@ -88,3 +88,7 @@ add_executable(owl_tests
 target_link_libraries(owl_tests awdl_sched radio_mock awdl_netif GTest::gtest_main)
 include(GoogleTest)
 gtest_discover_tests(owl_tests)
+
+# Replays an awdlcap capture through OWL's parser.
+add_executable(awdl_pcap tools/awdl_pcap.cpp)
+target_link_libraries(awdl_pcap awdl)

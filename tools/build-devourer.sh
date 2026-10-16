@@ -58,4 +58,7 @@ cmake -S "$DEPS/devourer" -B "$DEPS/devourer/build" -G Ninja -DCMAKE_BUILD_TYPE=
 	-DCMAKE_CXX_STANDARD_LIBRARIES="$WIN_LIBUSB/MinGW64/static/libusb-1.0.a -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32"
 cmake --build "$DEPS/devourer/build" -j "$(nproc)"
 ctest --test-dir "$DEPS/devourer/build" -j 8
-echo "built: $DEPS/devourer/build/rxdemo.exe, txdemo.exe"
+
+# awdlcap: our capture tool on devourer's API (GPL-2.0, like devourer).
+g++ -std=c++20 -O2 -I"$DEPS/devourer/src" -I"$DEPS/devourer/examples/common" 	-I"$DEPS/libusb/include" -I"$DEPS/libusb/include/libusb-1.0" 	"$REPO/radio/devourer/awdlcap.cpp" -o "$DEPS/awdlcap.exe" 	"$DEPS/devourer/build/libdevourer.a" "$DEPS/libusb/MinGW64/static/libusb-1.0.a"
+echo "built: $DEPS/devourer/build/rxdemo.exe, txdemo.exe, $DEPS/awdlcap.exe"

@@ -1,0 +1,11 @@
+--- a/src/rx.c
++++ b/src/rx.c
+@@ -486,7 +486,7 @@
+ 	uint16_t fc, qosc; /* frame and QoS control */
+ 	signed char rssi;
+ 	uint64_t tsft;
+-	uint8_t flags;
++	uint8_t flags = 0; /* radiotap_parse() only sets it when the Flags field is present */
+ 
+ 	tsft = clock_time_us(); /* TODO Radiotap TSFT is more accurate but then need to access TSF in clock_time_us() */
+ 	if (radiotap_parse(frame, &rssi, &flags, NULL /* &tsft */) < 0)
