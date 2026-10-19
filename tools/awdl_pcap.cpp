@@ -48,8 +48,10 @@ int main(int argc, char **argv) {
 				continue;
 			awdl++;
 			const struct buf *b = buf_new_const(frame.data(), (int) frame.size());
-			struct buf **data = nullptr;
-			results[awdl_rx(b, &data, &st)]++;
+			struct buf *outputs[16];
+			struct buf **data = outputs;
+			results[awdl_rx(b, &data, outputs + 16, &st)]++;
+			for (auto d = outputs; d < data; ++d) buf_free(*d);
 			buf_free(b);
 		}
 		fclose(f);
@@ -65,7 +67,9 @@ int main(int argc, char **argv) {
 	while (awdl_peers_it_next(it, &p) == PEERS_OK) {
 		char s[512];
 		awdl_peer_print(p, s, sizeof s);
-		printf("  %s\n", s);
+		printf("  %s (AWDL version=0x%02x device_class=%u)\n    channels:", s, p->version, p->devclass);
+        for (auto c : p->sequence) printf(" %u", awdl_chan_num(c, p->sequence_enc));
+        printf("\n");
 	}
 	awdl_peers_it_free(it);
 

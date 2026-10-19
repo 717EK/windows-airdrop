@@ -37,8 +37,10 @@ static std::vector<uint8_t> build_action(Node &n, enum awdl_action_type type) {
 
 static int receive(Node &n, std::vector<uint8_t> frame) {
 	const struct buf *b = buf_new_const(frame.data(), (int) frame.size());
-	struct buf **data = NULL;
-	int r = awdl_rx(b, &data, &n.awdl);
+	struct buf *outputs[16];
+	struct buf **data = outputs;
+	int r = awdl_rx(b, &data, outputs + 16, &n.awdl);
+	for (auto d = outputs; d < data; ++d) buf_free(*d);
 	buf_free(b);
 	return r;
 }

@@ -26,6 +26,8 @@ struct awdl_netif {
 	OVERLAPPED rx;
 	uint8_t rx_buf[FRAME_MAX];
 	int rx_pending;
+    int media_up, address_added;
+    MIB_UNICASTIPADDRESS_ROW own_address;
 };
 
 void awdl_rfc4291_addr(const struct ether_addr *mac, uint8_t out[16]) {
@@ -87,6 +89,7 @@ int awdl_netif_open(struct awdl_netif **out, const char *name) {
 		return -1;
 	}
 	nif->rx.hEvent = CreateEventA(NULL, TRUE, FALSE, NULL);
+	if (!nif->rx.hEvent) { CloseHandle(nif->dev); free(nif); return -1; }
 	*out = nif;
 	return 0;
 }
@@ -94,7 +97,17 @@ int awdl_netif_open(struct awdl_netif **out, const char *name) {
 void awdl_netif_close(struct awdl_netif *nif) {
 	if (!nif)
 		return;
-	CancelIoEx(nif->dev, NULL);
+    if (nif->rx_pending) {
+        DWORD done;
+        CancelIoEx(nif->dev, &nif->rx);
+        GetOverlappedResult(nif->dev, &nif->rx, &done, TRUE);
+    }
+    if (nif->address_added) DeleteUnicastIpAddressEntry(&nif->own_address);
+    if (nif->media_up) {
+        ULONG connected = 0, size;
+        DeviceIoControl(nif->dev, TAP_WIN_IOCTL_SET_MEDIA_STATUS, &connected, sizeof connected,
+            &connected, sizeof connected, &size, NULL);
+    }
 	CloseHandle(nif->dev);
 	CloseHandle(nif->rx.hEvent);
 	free(nif);
@@ -126,6 +139,7 @@ int awdl_netif_up(struct awdl_netif *nif) {
 	                     &connected, sizeof(connected), &len, NULL))
 		return -1;
 
+	nif->media_up = 1;
 	InitializeUnicastIpAddressEntry(&row);
 	ipv6_sockaddr(&row.Address, &nif->mac);
 	row.InterfaceLuid = nif->luid;
@@ -134,6 +148,7 @@ int awdl_netif_up(struct awdl_netif *nif) {
 	row.SuffixOrigin = IpSuffixOriginManual;
 	row.DadState = IpDadStatePreferred;
 	ULONG err = CreateUnicastIpAddressEntry(&row);
+    if (err == NO_ERROR) { nif->own_address = row; nif->address_added = 1; }
 	return (err == NO_ERROR || err == ERROR_OBJECT_ALREADY_EXISTS) ? 0 : -1;
 }
 

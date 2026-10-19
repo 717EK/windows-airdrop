@@ -1,0 +1,33 @@
+--- a/src/peers.c
++++ b/src/peers.c
+@@ -29,7 +29,7 @@
+  * documented. They are consumed as us by awdl_clean_peers() (cutoff against
+  * clock_time_us()) and by usec_to_sec() when arming the cleanup timer.
+  * Effective policy: evict peers unheard for 2 s, swept once per second. */
+-#define PEERS_DEFAULT_TIMEOUT        2000000 /* in us (2 s) */
++#define PEERS_DEFAULT_TIMEOUT        5000000 /* in us (5 s); sparse iPhone slots */
+ #define PEERS_DEFAULT_CLEAN_INTERVAL 1000000 /* in us (1 s) */
+ 
+ void awdl_peer_state_init(struct awdl_peer_state *state) {
+--- a/src/rx.c
++++ b/src/rx.c
+@@ -374,7 +374,8 @@
+ 	log_trace("awdl_data: receive from %s", ether_ntoa(src));
+ 	state->stats.rx_data++;
+ 
+-	if (awdl_peer_get(state->peers.peers, src, NULL) != PEERS_OK)
++	struct awdl_peer *peer;
++	if (awdl_peer_get(state->peers.peers, src, &peer) != PEERS_OK)
+ 		return RX_IGNORE_PEER;
+ 
+ 	if (!awdl_valid_llc_header(frame))
+@@ -391,6 +392,9 @@
+ 	buf_strip(frame, sizeof(struct awdl_data));
+ 
+ 	**out = buf_new_owned(ETHER_MAX_LEN);
++
++	/* A successfully decoded data frame is evidence the peer is still active. */
++	peer->last_update = clock_time_us();
+ 
+ 	/* TODO use checked write methods */
+ 	offset += write_ether_addr(**out, offset, dst);

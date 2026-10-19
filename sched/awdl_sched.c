@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "awdl_sched.h"
+#include "awdl_service.h"
 #include "log.h"
 #include "wire.h"
 #include "rx.h"
@@ -29,9 +30,34 @@ static void radio_send(struct awdl_sched *s, const uint8_t *buf, int len) {
 		log_warn("radio: transmit of %d bytes failed", len);
 }
 
+static int build_action(struct awdl_sched *s, uint8_t *buf, enum awdl_action_type type) {
+    int len = awdl_init_full_action_frame(buf, &s->awdl_state, &s->ieee80211_state, type);
+    if (len < 0 || !s->service_port) return len;
+    if (s->ieee80211_state.fcs) return -1; /* Native service mode uses the radio's hardware FCS. */
+    unsigned rt = buf[2] | buf[3] << 8;
+    for (unsigned off = rt + sizeof(struct ieee80211_hdr) + sizeof(struct awdl_action); off + 3 <= (unsigned)len;) {
+        unsigned size = 3 + (buf[off + 1] | buf[off + 2] << 8);
+        if (size > (unsigned)len - off) return -1;
+        if (buf[off] == AWDL_SERVICE_PARAMETERS_TLV) {
+            uint8_t filter[14];
+            int n = awdl_service_filter(filter, sizeof filter);
+            if (len - size + n > 65535) return -1;
+            memmove(buf + off + n, buf + off + size, len - off - size);
+            memcpy(buf + off, filter, n);
+            len += n - size;
+            break;
+        }
+        off += size;
+    }
+    if (type != AWDL_ACTION_MIF) return len;
+    int n = awdl_service_records(buf + len, 65535 - len, s->awdl_state.self_address.ether_addr_octet,
+                                 s->awdl_state.name, s->service_port);
+    return n < 0 ? -1 : len + n;
+}
+
 static void send_action(struct awdl_sched *s, enum awdl_action_type type) {
 	uint8_t buf[65535];
-	int len = awdl_init_full_action_frame(buf, &s->awdl_state, &s->ieee80211_state, type);
+	int len = build_action(s, buf, type);
 	if (len < 0)
 		return;
 	radio_send(s, buf, len);
@@ -46,8 +72,13 @@ static void send_data(struct awdl_sched *s, const struct buf *buf) {
 	read_ether_addr(buf, ETHER_DST_OFFSET, &dst);
 	read_ether_addr(buf, ETHER_SRC_OFFSET, &src);
 	buf_strip(buf, ETHER_LENGTH);
+	struct ieee80211_tx_rate saved_rate = awdl_data_tx_rate;
+	/* Discovery multicast stays at the compatible rate even in the faster data mode. */
+	if (dst.ether_addr_octet[0] & 1)
+		awdl_data_tx_rate = (struct ieee80211_tx_rate){ .legacy = 12, .mcs = -1, .sgi = 0 };
 	int len = awdl_init_full_data_frame(frame, &src, &dst, buf_data(buf), buf_len(buf),
 	                                    &s->awdl_state, &s->ieee80211_state);
+	awdl_data_tx_rate = saved_rate;
 	s->awdl_state.stats.tx_data++;
 	radio_send(s, frame, len);
 }
@@ -87,28 +118,33 @@ static void send_unicast(struct awdl_sched *s, uint64_t now) {
 	double in = 0;
 
 	s->due_unicast = AWDL_SCHED_IDLE;
-	if (!s->next)
-		return;
-
-	read_ether_addr(s->next, ETHER_DST_OFFSET, &dst);
-	if (compare_ether_addr(&dst, &awdl->self_address) == 0) { /* back to self */
-		if (s->deliver)
-			s->deliver(s->deliver_ctx, buf_data(s->next), buf_len(s->next));
-	} else if (awdl_peer_get(awdl->peers.peers, &dst, &peer) < 0) {
-		log_debug("drop frame to non-peer %s", ether_ntoa(&dst));
-	} else {
-		in = awdl_can_send_unicast_in(awdl, peer, now, AWDL_UNICAST_GUARD_TU);
-		if (in != 0) { /* not now: retry when the window opens */
-			if (in < 0) /* at the end of a slot, within the guard */
-				in = -in + usec_to_sec(ieee80211_tu_to_usec(AWDL_UNICAST_GUARD_TU));
-			s->due_unicast = after(now, in);
-			return;
+	/* Find an eligible frame without moving blocked frames past each other. */
+	for (unsigned i = 0; i < s->unicast_count; i++) {
+		struct buf *frame = s->unicast[i];
+		read_ether_addr(frame, ETHER_DST_OFFSET, &dst);
+		if (compare_ether_addr(&dst, &awdl->self_address) == 0) { /* back to self */
+			if (s->deliver)
+				s->deliver(s->deliver_ctx, buf_data(frame), buf_len(frame));
+		} else if (awdl_peer_get(awdl->peers.peers, &dst, &peer) < 0) {
+			log_debug("drop frame to non-peer %s", ether_ntoa(&dst));
+		} else {
+			in = awdl_can_send_unicast_in(awdl, peer, now, AWDL_UNICAST_GUARD_TU);
+			if (in != 0) { /* not now: retry when the window opens */
+				if (in < 0) /* at the end of a slot, within the guard */
+					in = -in + usec_to_sec(ieee80211_tu_to_usec(AWDL_UNICAST_GUARD_TU));
+				uint64_t retry = after(now, in);
+				if (retry < s->due_unicast) s->due_unicast = retry;
+				continue;
+			}
+			send_data(s, frame);
+			awdl->stats.tx_data_unicast++;
 		}
-		send_data(s, s->next);
-		awdl->stats.tx_data_unicast++;
+		buf_free(frame);
+		memmove(s->unicast + i, s->unicast + i + 1, (s->unicast_count - i - 1) * sizeof(*s->unicast));
+		s->unicast_count--;
+		if (s->unicast_count) s->due_unicast = now;
+		return; /* At most one packet per tick; do not flood the USB transmit queue. */
 	}
-	buf_free(s->next);
-	s->next = NULL;
 }
 
 static void send_multicast(struct awdl_sched *s, uint64_t now) {
@@ -390,6 +426,93 @@ static void awdl_adopt_chanseq(struct awdl_sched *state) {
 
 /* ---- End of copy. ---- */
 
+int awdl_sched_count_slots(struct awdl_sched *s, const unsigned *candidates, int n, int *slots) {
+	struct awdl_peer *p;
+	int peers = 0;
+	awdl_peers_it_t it = awdl_peers_it_new(s->awdl_state.peers.peers);
+
+	for (int c = 0; c < n; c++)
+		slots[c] = 0;
+	/* Slot counts are phase-invariant, so peers need not share our phase here. */
+	while (awdl_peers_it_next(it, &p) == PEERS_OK) {
+		if (!p->is_valid || !p->has_sequence)
+			continue;
+		peers++;
+		for (int i = 0; i < AWDL_CHANSEQ_LENGTH; i++) {
+			unsigned num = awdl_chan_num(p->sequence[i], p->sequence_enc);
+			for (int c = 0; c < n; c++)
+				if (num == candidates[c])
+					slots[c]++;
+		}
+	}
+	awdl_peers_it_free(it);
+	return peers;
+}
+
+unsigned awdl_chan_match_step(struct awdl_chan_match *m, const unsigned *candidates, const int *slots,
+                              int n, int peers, uint64_t now) {
+	int best = 0, current_slots = 0;
+
+	(void) now; /* decisions are per check; the caller paces checks about 1 s apart */
+	if (!peers && m->current == m->home) {
+		m->pending = 0;
+		m->stable = 0;
+		return 0;
+	}
+	/* Away with no peer counts as "not helping" below (0 >= 0): losing the phone
+	 * after moving is the failure seen live, and 149 is where discovery works. */
+	int home_slots = 0;
+	for (int c = 0; c < n; c++) {
+		if (slots[c] > slots[best])
+			best = c;
+		if (candidates[c] == m->current)
+			current_slots = slots[c];
+		if (candidates[c] == m->home)
+			home_slots = slots[c];
+	}
+	unsigned target = 0;
+	if (m->current != m->home) {
+		/* Away: the phone may drop its slots on our new channel once we arrive (seen
+		 * live: 36 x6 fell to 36 x1). Go home as soon as away no longer beats it. */
+		if (home_slots >= current_slots)
+			target = m->home;
+	} else if (!m->gave_up && candidates[best] != m->home && slots[best] >= home_slots + AWDL_MATCH_MARGIN) {
+		target = candidates[best];
+	}
+	if (!target) {
+		m->pending = 0;
+		m->stable = 0;
+		return 0;
+	}
+	/* Hysteresis: a sequence that flickers for one check must not move the radio. */
+	if (m->pending == target)
+		m->stable++;
+	else {
+		m->pending = target;
+		m->stable = 1;
+	}
+	if (m->stable < AWDL_MATCH_STABLE)
+		return 0;
+	m->pending = 0;
+	m->stable = 0;
+	if (target == m->home)
+		m->gave_up = 1; /* one failed try per session; retrying would just oscillate */
+	return target;
+}
+
+void awdl_sched_set_channel(struct awdl_sched *s, unsigned chan) {
+	struct awdl_state *awdl = &s->awdl_state;
+	struct awdl_chan c = {{{(uint8_t) chan, chan > 14 ? 0x80 : 0x51}}};
+
+	awdl->channel.master = c;
+	awdl->channel.current = c;
+	awdl_chanseq_init_static(awdl->channel.sequence, &c);
+	awdl->channel.enc = AWDL_CHAN_ENC_OPCLASS;
+	awdl->channel.sequence_from_peer = 0;
+	awdl->channel.pinned_chan = 0;
+	awdl_adopt_chanseq(s); /* advertise the slots we can now serve on the new channel */
+}
+
 static void clean_peers(struct awdl_sched *s, uint64_t now) {
 	struct awdl_state *awdl = &s->awdl_state;
 	uint64_t cutoff = now > awdl->peers.timeout ? now - awdl->peers.timeout : 0;
@@ -425,8 +548,8 @@ void awdl_sched_init(struct awdl_sched *s, const char *hostname, const struct et
 
 void awdl_sched_free(struct awdl_sched *s) {
 	void *b;
-	if (s->next)
-		buf_free(s->next);
+	for (unsigned i = 0; i < s->unicast_count; i++) buf_free(s->unicast[i]);
+	s->unicast_count = 0;
 	while (circular_buf_get(s->tx_queue_multicast, &b, 0) == 0)
 		buf_free(b);
 	circular_buf_free(s->tx_queue_multicast);
@@ -463,15 +586,15 @@ int awdl_sched_radio_rx(struct awdl_sched *s, const uint8_t *frame, int len) {
 	struct buf *data_arr[MAX_NUM_AMPDU];
 	struct buf **data = &data_arr[0];
 	const struct buf *b = buf_new_const(frame, len);
-	int result = awdl_rx(b, &data, &s->awdl_state);
+	int result = awdl_rx(b, &data, data_arr + MAX_NUM_AMPDU, &s->awdl_state);
 
-	if (result == RX_OK) {
-		for (struct buf **d = &data_arr[0]; d < data; d++) {
-			if (s->deliver)
-				s->deliver(s->deliver_ctx, buf_data(*d), buf_len(*d));
-			buf_free(*d);
-		}
-	} else if (result < RX_OK) {
+	/* A failed aggregate may already have produced partial outputs. */
+	for (struct buf **d = data_arr; d < data; d++) {
+		if (result == RX_OK && s->deliver)
+			s->deliver(s->deliver_ctx, buf_data(*d), buf_len(*d));
+		buf_free(*d);
+	}
+	if (result < RX_OK) {
 		s->awdl_state.stats.rx_unknown++;
 	}
 	buf_free(b);
@@ -482,7 +605,7 @@ int awdl_sched_host_tx(struct awdl_sched *s, const uint8_t *eth, int len) {
 	if (len < ETHER_LENGTH || len > ETHER_MAX_LEN)
 		return -1;
 	bool multicast = eth[ETHER_DST_OFFSET] & 0x01;
-	if (multicast ? circular_buf_full(s->tx_queue_multicast) : s->next != NULL)
+	if (multicast ? circular_buf_full(s->tx_queue_multicast) : s->unicast_count == AWDL_UNICAST_QUEUE)
 		return -1;
 
 	struct buf *b = buf_new_owned(len);
@@ -493,8 +616,20 @@ int awdl_sched_host_tx(struct awdl_sched *s, const uint8_t *eth, int len) {
 		if (s->due_multicast == AWDL_SCHED_IDLE)
 			s->due_multicast = now;
 	} else {
-		s->next = b;
+		s->unicast[s->unicast_count++] = b;
 		s->due_unicast = now;
 	}
 	return 0;
+}
+
+int awdl_sched_probe(struct awdl_sched *s, const struct ether_addr *peer) {
+    if (!peer || (peer->ether_addr_octet[0] & 1) ||
+        !memcmp(peer, &s->awdl_state.self_address, sizeof(*peer))) return -1;
+    uint8_t frame[65535];
+    struct ether_addr saved = s->awdl_state.dst;
+    s->awdl_state.dst = *peer;
+    int len = build_action(s, frame, AWDL_ACTION_MIF);
+    s->awdl_state.dst = saved;
+    if (len < 0) return -1;
+    return s->radio->transmit(s->radio_ctx, frame, (unsigned)len) < 0 ? -1 : 0;
 }

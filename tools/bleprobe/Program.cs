@@ -15,8 +15,8 @@ const ushort Apple = 0x004C;
 
 var mode = args.Length > 0 ? args[0] : "";
 var seconds = args.Length > 1 ? int.Parse(args[1]) : 10;
-if (mode != "publish" && mode != "scan") {
-    Console.WriteLine("usage: bleprobe publish|scan [seconds]");
+if (mode != "publish" && mode != "publish-airdrop" && mode != "scan" && mode != "radio-on" && mode != "radio-cycle") {
+    Console.WriteLine("usage: bleprobe publish|publish-airdrop|scan [seconds], or radio-on|radio-cycle");
     return 2;
 }
 
@@ -25,19 +25,42 @@ if (adapter is null) {
     Console.WriteLine("NO BLUETOOTH ADAPTER");
     return 4;
 }
+var physicalRadio = await adapter.GetRadioAsync();
+Console.WriteLine($"radio state={physicalRadio?.State}");
+if (mode == "radio-on" || mode == "radio-cycle") {
+    var access = await Windows.Devices.Radios.Radio.RequestAccessAsync();
+    if (physicalRadio is null || access != Windows.Devices.Radios.RadioAccessStatus.Allowed) {
+        Console.WriteLine($"radio access={access}; enable Bluetooth in Windows Settings");
+        return 1;
+    }
+    if (mode == "radio-cycle") {
+        try {
+            var off = await physicalRadio.SetStateAsync(Windows.Devices.Radios.RadioState.Off);
+            Console.WriteLine($"radio disable={off}, state={physicalRadio.State}");
+            if (off != Windows.Devices.Radios.RadioAccessStatus.Allowed) return 1;
+            await Task.Delay(TimeSpan.FromSeconds(3));
+        } finally {
+            var restore = await physicalRadio.SetStateAsync(Windows.Devices.Radios.RadioState.On);
+            Console.WriteLine($"radio restore={restore}, state={physicalRadio.State}");
+        }
+    }
+    var result = await physicalRadio.SetStateAsync(Windows.Devices.Radios.RadioState.On);
+    Console.WriteLine($"radio enable={result}, state={physicalRadio.State}");
+    return result == Windows.Devices.Radios.RadioAccessStatus.Allowed ? 0 : 1;
+}
 Console.WriteLine($"adapter  LE={adapter.IsLowEnergySupported} peripheral={adapter.IsPeripheralRoleSupported} " +
                   $"central={adapter.IsCentralRoleSupported} offload={adapter.IsAdvertisementOffloadSupported} " +
                   $"extendedAdv={adapter.IsExtendedAdvertisingSupported} maxAdvLen={adapter.MaxAdvertisementDataLength}");
 
-if (mode == "publish") {
+if (mode == "publish" || mode == "publish-airdrop") {
     // Continuity TLV: type 0x05, length 0x12, arm A body: 40 <tag 3> 00000000 03 <hashes 8> 00
     byte[] airdrop = [0x05, 0x12, 0x40, 0, 0, 0, 0, 0, 0, 0, 0x03, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-    var control = await Publish(0xFFFF, [0x01, 0x02, 0x03], "control");
+    bool? control = mode == "publish" ? await Publish(0xFFFF, [0x01, 0x02, 0x03], "control") : null;
     var apple = await Publish(Apple, airdrop, "airdrop");
-    Console.WriteLine($"RESULT control={control} airdrop={apple}");
+    Console.WriteLine($"RESULT control={control?.ToString() ?? "skipped"} airdrop={apple}");
     Console.WriteLine("NOTE  'Started' means Windows accepted and is advertising it. It does not prove what " +
                       "went on air: confirm with a second scanner (e.g. nRF Connect, filter company 0x004C).");
-    return 0;
+    return apple ? 0 : 1;
 }
 
 // scan
@@ -81,6 +104,7 @@ async Task<bool> Publish(ushort company, byte[] data, string label) {
     var trail = new List<string>();
     BluetoothError error = BluetoothError.Success;
     pub.StatusChanged += (_, e) => {
+        Console.WriteLine($"{label} state={e.Status} error={e.Error}");
         lock (trail) {
             trail.Add(e.Status.ToString());
             if (e.Error != BluetoothError.Success)
@@ -95,8 +119,7 @@ async Task<bool> Publish(ushort company, byte[] data, string label) {
     }
     await Task.Delay(TimeSpan.FromSeconds(seconds));
     var final = pub.Status;
-    if (final == BluetoothLEAdvertisementPublisherStatus.Started)
-        pub.Stop();
+    pub.Stop(); // Also release a publisher waiting for a shared radio resource.
     lock (trail)
         Console.WriteLine($"{label,-8} company=0x{company:x4} data={hex}  status: {string.Join(" -> ", trail)}" +
                           (error != BluetoothError.Success ? $"  error={error}" : ""));

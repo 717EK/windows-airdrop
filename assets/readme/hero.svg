@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="340" viewBox="0 0 1200 340" role="img" aria-labelledby="title desc">
+<title id="title">PulseDrop — your iPhone, your Windows PC</title>
+<desc id="desc">Send files nearby with a supported USB adapter. No iPhone app required. Developer preview.</desc>
+<defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#0d1424"/><stop offset="1" stop-color="#172c4e"/></linearGradient><linearGradient id="blue" x2=".7" y2="1"><stop stop-color="#5ab4ff"/><stop offset="1" stop-color="#0a60eb"/></linearGradient></defs>
+<rect width="1200" height="340" rx="24" fill="url(#bg)"/>
+<circle cx="1040" cy="160" r="210" fill="#244f83" opacity=".2"/>
+<g transform="translate(44 38) scale(.25)"><rect width="256" height="256" rx="32" fill="url(#blue)"/><path d="M52 136H88L108 88L140 172L164 120H204" fill="none" stroke="white" stroke-width="16" stroke-linejoin="round" stroke-linecap="round"/></g>
+<g font-family="Segoe UI,Arial,sans-serif"><text x="126" y="84" font-size="42" font-weight="700" fill="white">PulseDrop</text>
+<text x="44" y="163" font-size="38" font-weight="600" fill="white">Your iPhone. Your Windows PC.</text>
+<text x="46" y="207" font-size="23" fill="#b9cbe2">Send files nearby. No iPhone app required.</text>
+<rect x="44" y="255" width="180" height="36" rx="18" fill="#243f62"/><text x="134" y="279" text-anchor="middle" font-size="16" fill="#d9eaff">Developer preview</text>
+<text x="240" y="279" font-size="16" fill="#92aac7">Supported USB adapter required</text></g>
+<g fill="none" stroke="#8fc8ff" stroke-width="4" stroke-linejoin="round"><rect x="855" y="78" width="264" height="156" rx="12" fill="#11223c"/><path d="M987 234v23m-52 0h104"/><rect x="1051" y="148" width="88" height="148" rx="16" fill="#152c49"/><path d="M1082 162h26"/></g>
+<g stroke="#62c7ff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M912 133h108l-13-13m13 13-13 13M1020 180H912l13-13m-13 13 13 13"/></g>
+</svg>

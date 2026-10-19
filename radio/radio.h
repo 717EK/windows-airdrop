@@ -20,7 +20,7 @@ struct RadioCapabilities {
 
 struct RadioBackend {
 	int (*open)(void *ctx);
-	/* Returns the frame length, 0 when nothing is waiting, or -1 if it doesn't fit in cap. */
+	/* Returns the frame length, 0 when nothing is waiting, or -1 on a backend error or if it doesn't fit in cap. */
 	int (*capture)(void *ctx, unsigned char *buf, unsigned int cap);
 	int (*transmit)(void *ctx, const unsigned char *frame, unsigned int len);
 	int (*set_channel)(void *ctx, unsigned int channel);

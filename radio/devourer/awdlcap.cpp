@@ -4,7 +4,7 @@
 //
 //   awdlcap <channel> <seconds> <out.pcap>      e.g.  awdlcap 6 30 ch6.pcap
 //
-// Links devourer, so this program is GPL-2.0 (see docs/native-radio-workaround.md).
+// Links devourer, so this program is GPL-2.0 (see LICENSE).
 #include <libusb.h>
 
 #include <atomic>

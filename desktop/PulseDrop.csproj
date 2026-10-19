@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyName>PulseDrop</AssemblyName>
+    <ApplicationIcon>..\assets\brand\PulseDrop.ico</ApplicationIcon>
+    <Version>0.2.7</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="..\assets\brand\PulseDrop.ico" LogicalName="PulseDrop.Icon" />
+  </ItemGroup>
+</Project>

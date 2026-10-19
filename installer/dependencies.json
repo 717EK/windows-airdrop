@@ -1,0 +1,34 @@
+{
+  "python_version": "3.13.16",
+  "files": [
+    {
+      "name": "python-embed.zip",
+      "url": "https://www.python.org/ftp/python/3.13.16/python-3.13.16-embed-amd64.zip",
+      "bytes": 11439094,
+      "sha256": "97dae5274cc54867065e8d5a3226e48c35017ed332a0fdb0e27d5b5821961297"
+    },
+    {
+      "name": "innosetup.exe",
+      "url": "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe",
+      "bytes": 10592232,
+      "sha256": "9c73c3bae7ed48d44112a0f48e66742c00090bdb5bef71d9d3c056c66e97b732"
+    },
+    {
+      "name": "zadig.exe",
+      "url": "https://github.com/pbatard/libwdi/releases/download/v1.5.1/zadig-2.9.exe",
+      "bytes": 5334088,
+      "sha256": "4ecaa95df3da3621486a043aef8b3050b8bafe7c901402871e816229ef82039b"
+    },
+    {
+      "name": "libwdi-source.zip",
+      "url": "https://github.com/pbatard/libwdi/archive/refs/tags/v1.5.1.zip",
+      "bytes": 338305,
+      "sha256": "746547aaf927cae44c75512d763941805928427f4ba4df3dbb40c3f7f561821e"
+    },
+    {
+      "name": "wdk-redist",
+      "url": "https://download.microsoft.com/download/0/5/F/05FD6919-6250-425B-86ED-9B095E54065A/wdfcoinstaller.msi",
+      "sha256": "29314207814ce9d5d73695f7e9239539cf37c79e750b9d5ea5a5ef5487a583d6"
+    }
+  ]
+}

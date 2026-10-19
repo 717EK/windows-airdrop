@@ -1,0 +1,71 @@
+name: Unsigned development installer
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13.16'
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Prepare pinned compiler, TAP package and build Python
+        shell: powershell
+        run: ./tools/bootstrap-ci.ps1
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
+        with:
+          msystem: UCRT64
+          path-type: inherit
+          install: pkgconf gnupg p7zip
+      - name: Native build and protocol checks
+        shell: bash
+        run: |
+          export PATH="$(pwd)/../deps/mingw64/bin:$PATH"
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
+          cmake --build build
+          ctest --test-dir build --output-on-failure
+      - name: Build standalone radio bridge
+        shell: msys2 {0}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          export GNUPGHOME="$(pwd)/../deps/gnupg-ci"
+          mkdir -p "$GNUPGHOME"
+          chmod 700 "$GNUPGHOME"
+          tools/build-devourer.sh
+      - name: Python regressions
+        shell: powershell
+        run: |
+          & ../deps/airdrop-venv/Scripts/python.exe -m unittest discover -s tests -p 'test_*.py'
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Package unsigned development installer
+        shell: powershell
+        run: ./tools/build-installer.ps1 -MingwRoot ../deps/mingw64
+      - name: Desktop self-check and packaged Python regressions
+        shell: powershell
+        run: |
+          dotnet build/installer-stage/PulseDrop.dll --self-test
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & build/installer-stage/runtime/python.exe -E -s -X utf8 -m unittest discover -s tests -p 'test_*.py'
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Record build origin and artifact hash
+        shell: powershell
+        run: |
+          $installer = Get-Item dist/PulseDrop-Setup-0.2.7-x64.exe
+          @{ source_revision=$env:GITHUB_SHA; run_id=$env:GITHUB_RUN_ID; image_version=$env:ImageVersion; signed=$false; sha256=(Get-FileHash $installer.FullName).Hash } | ConvertTo-Json | Set-Content dist/build-origin.json -Encoding utf8
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: PulseDrop-unsigned-development-${{ github.sha }}
+          path: |
+            dist/PulseDrop-Setup-0.2.7-x64.exe
+            dist/build-origin.json
+            build/installer-stage/source/*.zip
+            build/installer-stage/payload-sha256.json
+          if-no-files-found: error
+          retention-days: 14

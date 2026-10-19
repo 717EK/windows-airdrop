@@ -6,6 +6,9 @@
 #   tools/build-devourer.sh [deps-dir]     (default: ../deps next to this repo)
 set -euo pipefail
 
+# Git Bash can put its older runtime DLLs ahead of the selected compiler.
+export PATH="$(dirname "$(command -v gcc)"):$PATH"
+
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 DEPS="${1:-$REPO/../deps}"
 DEVOURER_COMMIT=74c6b37ce1c7ae198873d3a720466def691b86fb   # audited 2026-10-13
@@ -62,3 +65,9 @@ ctest --test-dir "$DEPS/devourer/build" -j 8
 # awdlcap: our capture tool on devourer's API (GPL-2.0, like devourer).
 g++ -std=c++20 -O2 -I"$DEPS/devourer/src" -I"$DEPS/devourer/examples/common" 	-I"$DEPS/libusb/include" -I"$DEPS/libusb/include/libusb-1.0" 	"$REPO/radio/devourer/awdlcap.cpp" -o "$DEPS/awdlcap.exe" 	"$DEPS/devourer/build/libdevourer.a" "$DEPS/libusb/MinGW64/static/libusb-1.0.a"
 echo "built: $DEPS/devourer/build/rxdemo.exe, txdemo.exe, $DEPS/awdlcap.exe"
+
+g++ -std=c++20 -O2 -I"$DEPS/devourer/src" -I"$DEPS/devourer/examples/common" \
+    -I"$DEPS/libusb/include" -I"$DEPS/libusb/include/libusb-1.0" \
+    "$REPO/radio/devourer/bridge.cpp" -o "$DEPS/devourer-bridge.exe" \
+    "$DEPS/devourer/build/libdevourer.a" "$DEPS/libusb/MinGW64/static/libusb-1.0.a"
+echo "built: $DEPS/devourer-bridge.exe"

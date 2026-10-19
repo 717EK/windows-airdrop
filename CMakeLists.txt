@@ -9,7 +9,7 @@ endif ()
 
 include(FetchContent)
 
-# Pins, from omdrop-owl's ./pins (docs/section16-audit.md has the full map).
+# Pins, from omdrop-owl's ./pins (THIRD_PARTY_NOTICES.md has the full map).
 FetchContent_Declare(omdrop_owl
     GIT_REPOSITORY https://github.com/t4t5/omdrop-owl.git
     GIT_TAG ca3de11584370325647b63f8d2ecf571bb10e9d2
@@ -69,7 +69,7 @@ add_library(radio_mock STATIC radio/mock_radio.c)
 target_include_directories(radio_mock PUBLIC radio)
 
 # Replaces OWL's daemon/core.c timing loop; no libev/libpcap/TAP.
-add_library(awdl_sched STATIC sched/awdl_sched.c)
+add_library(awdl_sched STATIC sched/awdl_sched.c sched/awdl_service.c)
 target_include_directories(awdl_sched PUBLIC sched radio)
 target_link_libraries(awdl_sched PUBLIC awdl)
 
@@ -92,3 +92,19 @@ gtest_discover_tests(owl_tests)
 # Replays an awdlcap capture through OWL's parser.
 add_executable(awdl_pcap tools/awdl_pcap.cpp)
 target_link_libraries(awdl_pcap awdl)
+
+# IPC client links only OWL; the devourer service is built separately.
+add_library(radio_pipe STATIC radio/pipe_radio.c)
+target_include_directories(radio_pipe PUBLIC radio)
+target_compile_definitions(radio_pipe PRIVATE _WIN32_WINNT=0x0601)
+add_executable(awdl_link tools/awdl_link.c)
+target_link_libraries(awdl_link awdl_sched radio_pipe awdl_netif advapi32 winmm)
+
+add_executable(pipe_radio_tests tests/test_pipe_radio.cpp)
+target_link_libraries(pipe_radio_tests radio_pipe GTest::gtest_main)
+gtest_discover_tests(pipe_radio_tests)
+
+add_test(NAME link.reject_conflicting_modes COMMAND awdl_link unused 6 1 --probe --listen)
+set_tests_properties(link.reject_conflicting_modes PROPERTIES WILL_FAIL TRUE)
+add_test(NAME link.reject_missing_tap_name COMMAND awdl_link unused 6 1 --tap)
+set_tests_properties(link.reject_missing_tap_name PROPERTIES WILL_FAIL TRUE)

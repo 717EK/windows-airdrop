@@ -1,0 +1,14 @@
+{
+  "files": [
+    {
+      "name": "mingw.7z",
+      "url": "https://github.com/niXman/mingw-builds-binaries/releases/download/16.2.0-rt_v14-rev1/x86_64-16.2.0-release-posix-seh-ucrt-rt_v14-rev1.7z",
+      "sha256": "26788998d615856a915e1eeacb0854fce87bc608fa9a0c16f96bcbfdcf3415c0"
+    },
+    {
+      "name": "tap-dist.win10.zip",
+      "url": "https://github.com/OpenVPN/tap-windows6/releases/download/9.27.0/dist.win10.zip",
+      "sha256": "36e2609b7ceefedcb978ce5c48caf9e0e5af83423717c4e2e3c1d7ebca8f62a5"
+    }
+  ]
+}

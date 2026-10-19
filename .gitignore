@@ -1,3 +1,27 @@
 build/
 tools/bleprobe/bin/
 tools/bleprobe/obj/
+
+__pycache__/
+*.pyc
+
+desktop/bin/
+desktop/obj/
+dist/
+
+# Runtime identities, credentials, captures and local environment files.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+*.pcap
+*.pcapng
+*.etl
+*.log
+logs/
+received/
+.venv/
+.vs/

@@ -1,0 +1,5 @@
+cryptography==50.0.2
+zeroconf==0.151.5
+cffi==2.1.1
+pycparser==3.11
+ifaddr==0.2.0

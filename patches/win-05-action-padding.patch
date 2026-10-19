@@ -1,0 +1,17 @@
+--- a/src/rx.c
++++ b/src/rx.c
+@@ -321,6 +321,14 @@
+ 		buf_strip(frame, len);
+ 	}
+ 
++	/* Some iPhone MIFs end with one or two padding zeros. */
++	if (buf_len(frame) < 3) {
++		int zeros = 0;
++		while (zeros < buf_len(frame) && buf_data(frame)[zeros] == 0)
++			zeros++;
++		if (zeros == buf_len(frame))
++			buf_strip(frame, zeros);
++	}
+ 	if (buf_len(frame) > 0) {
+ 		log_debug("awdl_action: unexpected bytes (%d) at end of frame", buf_len(frame));
+ 		return RX_UNEXPECTED_FORMAT;

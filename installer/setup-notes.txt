@@ -1,0 +1,13 @@
+PulseDrop for Windows x64 - local development build
+
+Plug in one TP-Link Archer T3U with USB ID 2357:012d. This setup includes the app, Python, .NET, TAP-Windows6 and a USB driver binding helper. No iPhone app is needed.
+
+Choosing adapter configuration switches this TP-Link USB adapter to WinUSB, so it cannot provide ordinary Wi-Fi while PulseDrop uses it. The original vendor driver is saved first; an already compatible Windows inbox driver is retained. Start menu > PulseDrop > Restore USB Wi-Fi driver reverses the binding. Other USB adapters and Intel Bluetooth are not targets.
+
+The USB helper uses libwdi to create the device-specific signed catalog locally, using Windows' existing WinUSB system driver. Windows may request driver/certificate approval. Existing WinUSB and awdl0 installations are reused.
+
+Bluetooth stays on normally. If Windows blocks advertising, the app retries without resetting Bluetooth, then offers a recovery prompt. Approving recovery briefly disconnects Bluetooth accessories and restores the original Windows service states afterward.
+
+Files up to 1 GiB are streamed through bounded temporary files. Allow enough free disk space for the archive and extraction. Incoming files require approval. Keep your iPhone unlocked with Everyone for 10 Minutes enabled. Interrupted transfers never publish a partial file as complete.
+
+This build is unsigned and has not yet been validated on a clean second PC. Hardware reliability and driver restoration tests are recorded in the bundled documentation. Received files and driver backups are retained on uninstall.

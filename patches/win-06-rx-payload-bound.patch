@@ -1,0 +1,11 @@
+--- a/src/rx.c
++++ b/src/rx.c
+@@ -399,6 +399,8 @@
+ 	read_be16(frame, 6, &ether_type);
+ 	buf_strip(frame, sizeof(struct awdl_data));
+ 
++	if (buf_len(frame) > ETHER_MAX_LEN - 14)
++		return RX_UNEXPECTED_FORMAT; /* never copy a jumbo payload into a fixed Ethernet buffer */
+ 	if (*out >= out_end)
+ 		return RX_TOO_MANY_FRAMES;
+ 	**out = buf_new_owned(ETHER_MAX_LEN);

@@ -72,7 +72,7 @@ static std::vector<uint8_t> neighbour_solicitation(const ether_addr &peer, const
 TEST(netif, tap_round_trip_with_windows_stack) {
 	struct awdl_netif *nif;
 	if (awdl_netif_open(&nif, nullptr) != 0)
-		GTEST_SKIP() << "no TAP-Windows6 adapter (see docs/virtual-adapter.md)";
+		GTEST_SKIP() << "no TAP-Windows6 adapter (see docs/build.md)";
 	if (awdl_netif_up(nif) != 0) {
 		awdl_netif_close(nif);
 		GTEST_SKIP() << "awdl_netif_up failed: run the tests as administrator";

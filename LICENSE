@@ -1,0 +1,19 @@
+PulseDrop source licensing
+=========================
+
+Unless a file notice or exception below states otherwise, local project source
+is licensed under GNU GPL version 3 or (at your option) any later version
+(SPDX: GPL-3.0-or-later). The complete text is in COPYING.
+
+Exceptions retaining their own licenses:
+
+- radio/devourer/bridge.cpp and radio/devourer/awdlcap.cpp: GPL-2.0-only;
+  see licenses/GPL-2.0.txt. Standalone devourer programs, not linked with OWL.
+- patches/devourer-01-mingw-txdemo-fork.patch: GPL-2.0-only, a devourer change.
+- radio/pipe_protocol.h and radio/frame_filter.h: MIT; see licenses/MIT.txt.
+- airdrop/media_capabilities.json: MIT; upstream attribution and full terms
+  in airdrop/THIRD_PARTY_NOTICES.md.
+
+Fetched third-party code retains its upstream copyright and license. This
+default does not relicense third-party code, drivers, runtimes or SDK
+redistributables. See THIRD_PARTY_NOTICES.md.
