@@ -271,8 +271,11 @@ int main(int argc, char **argv) {
             loops = queue_peak = 0; loop_us = max_loop_us = tx_late_us = 0;
         }
         if (failed) break;
-        /* Sleep only when idle: a loop that moved frames goes straight back for more. */
-        if (!drained && !s.unicast_count) Sleep(1);
+        /* Sleep only when idle: a loop that moved frames goes straight back for
+         * more, and so does one with a unicast due now. A unicast waiting for
+         * the peer's next availability window is not work: spinning on it
+         * would issue empty RX pipe requests until the window opens. */
+        if (!drained && !(s.unicast_count && s.due_unicast <= clock_time_us())) Sleep(1);
     }
     printf("RX=%u OWL_OK=%u peers=%d peak_peers=%u ACK_to_local=%u action_attempts=%u directed_probes=%u bridge_failed=%d\n",
         received, accepted, awdl_peers_length(s.awdl_state.peers.peers), peak_peers, ack_to_self,
