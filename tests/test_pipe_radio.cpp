@@ -196,3 +196,22 @@ TEST(pipe_radio, delivers_local_awdl_addba_to_responder_but_rejects_ambient_requ
     frame[24] = 4;
     EXPECT_FALSE(radio_frame_wanted(frame, sizeof frame, self));
 }
+
+TEST(pipe_radio, truncated_block_ack_actions_are_rejected_without_reading_past_the_frame) {
+    unsigned char self[6] = {2, 1, 2, 3, 4, 5};
+    for (size_t n = 24; n < 30; n++) {
+        // Exact-size heap copy, so a read past n is out of bounds for sanitizer builds.
+        std::vector<unsigned char> f(n, 0);
+        f[0] = 0xd0;
+        memcpy(f.data() + 4, self, 6);
+        memcpy(f.data() + 16, "\x00\x25\x00\xff\x94\x73", 6);
+        EXPECT_FALSE(radio_frame_wanted(f.data(), f.size(), self)) << n;
+    }
+    std::vector<unsigned char> delba(30, 0);
+    delba[0] = 0xd0;
+    memcpy(delba.data() + 4, self, 6);
+    memcpy(delba.data() + 16, "\x00\x25\x00\xff\x94\x73", 6);
+    delba[24] = 3;
+    delba[25] = 2;
+    EXPECT_TRUE(radio_frame_wanted(delba.data(), delba.size(), self));
+}

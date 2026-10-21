@@ -655,6 +655,8 @@ static int ba_session_rx(struct awdl_sched *s, const uint8_t *frame, int len) {
 		return 1;
 	}
 	if (hdr[0] == 0xd0 && len >= (int) rt + 30 && hdr[24] == 3 && hdr[25] == 2) { /* DELBA */
+		/* Parameter set: bit 11 initiator, bits 12-15 TID. Only our session's TID ends it. */
+		if ((unsigned) (hdr[27] >> 4) != s->ba_tid) return 1;
 		s->delba_seen++;
 		ba_reorder_stop(&s->ba, ba_release, s);
 		printf("DELBA from %s: Block Ack session ended\n", ether_ntoa(&s->ba_peer));

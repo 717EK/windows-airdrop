@@ -462,7 +462,11 @@ TEST_F(Sim, accepted_block_ack_session_reorders_data_and_honours_bar_and_delba) 
     EXPECT_EQ(a.s.ba.stored, 0u);
     EXPECT_EQ(a.s.ba.head, 4);
     EXPECT_EQ(a.s.ba.reordered, 2u);
-    auto delba = hdr(0xd0, {0, 0x25, 0, 0xff, 0x94, 0x73, 0, 0, 3, 2, 0, 0x50, 1, 0});
+    auto other_delba = hdr(0xd0, {0, 0x25, 0, 0xff, 0x94, 0x73, 0, 0, 3, 2, 0, 0x60, 1, 0}); // TID 6
+    EXPECT_EQ(awdl_sched_radio_rx(&a.s, other_delba.data(), other_delba.size()), RX_OK);
+    EXPECT_TRUE(a.s.ba.active);
+    EXPECT_EQ(a.s.delba_seen, 0u);
+    auto delba = hdr(0xd0, {0, 0x25, 0, 0xff, 0x94, 0x73, 0, 0, 3, 2, 0, 0x50, 1, 0}); // TID 5
     EXPECT_EQ(awdl_sched_radio_rx(&a.s, delba.data(), delba.size()), RX_OK);
     EXPECT_EQ(a.s.delba_seen, 1u);
     EXPECT_FALSE(a.s.ba.active);
