@@ -1,6 +1,7 @@
 /* Port of OWL's daemon/core.c scheduling (jedbillyb/owl 832d70f + omdrop-owl
  * patches) from libev timers to due times. Same decisions, same guards.
  * GPL-3.0-or-later, as the code it derives from. */
+#include <stdio.h>
 #include <string.h>
 
 #include "awdl_sched.h"
@@ -24,6 +25,8 @@
 static uint64_t after(uint64_t now, double sec) {
 	return now + sec_to_usec(sec);
 }
+
+static void ba_release(void *ctx, const uint8_t *frame, int len);
 
 static void radio_send(struct awdl_sched *s, const uint8_t *buf, int len) {
 	if (s->radio->transmit(s->radio_ctx, buf, (unsigned int) len) < 0)
@@ -428,25 +431,19 @@ static void awdl_adopt_chanseq(struct awdl_sched *state) {
 
 int awdl_sched_count_slots(struct awdl_sched *s, const unsigned *candidates, int n, int *slots) {
 	struct awdl_peer *p;
-	int peers = 0;
-	awdl_peers_it_t it = awdl_peers_it_new(s->awdl_state.peers.peers);
 
 	for (int c = 0; c < n; c++)
 		slots[c] = 0;
-	/* Slot counts are phase-invariant, so peers need not share our phase here. */
-	while (awdl_peers_it_next(it, &p) == PEERS_OK) {
-		if (!p->is_valid || !p->has_sequence)
-			continue;
-		peers++;
-		for (int i = 0; i < AWDL_CHANSEQ_LENGTH; i++) {
-			unsigned num = awdl_chan_num(p->sequence[i], p->sequence_enc);
-			for (int c = 0; c < n; c++)
-				if (num == candidates[c])
-					slots[c]++;
-		}
+	uint64_t now = clock_time_us();
+	if (!s->receive_peer_seen || now < s->receive_peer_seen || now - s->receive_peer_seen > 5000000 ||
+	    awdl_peer_get(s->awdl_state.peers.peers, &s->receive_peer, &p) != PEERS_OK ||
+	    !p->is_valid || !p->has_sequence) return 0;
+	for (int i = 0; i < AWDL_CHANSEQ_LENGTH; i++) {
+		unsigned num = awdl_chan_num(p->sequence[i], p->sequence_enc);
+		for (int c = 0; c < n; c++)
+			if (num == candidates[c]) slots[c]++;
 	}
-	awdl_peers_it_free(it);
-	return peers;
+	return 1;
 }
 
 unsigned awdl_chan_match_step(struct awdl_chan_match *m, const unsigned *candidates, const int *slots,
@@ -554,6 +551,8 @@ void awdl_sched_free(struct awdl_sched *s) {
 		buf_free(b);
 	circular_buf_free(s->tx_queue_multicast);
 	awdl_peers_free(s->awdl_state.peers.peers);
+	ba_reorder_start(&s->ba, 0, 0); /* frees held frames */
+	s->ba.active = 0;
 }
 
 #define DUE(t) ((t) != AWDL_SCHED_IDLE && (t) <= now)
@@ -561,6 +560,9 @@ void awdl_sched_free(struct awdl_sched *s) {
 
 uint64_t awdl_sched_tick(struct awdl_sched *s) {
 	uint64_t now = clock_time_us();
+
+	if (s->ba.active)
+		ba_reorder_timeout(&s->ba, now, ba_release, s);
 
 	/* Channel first, so frames sent in this tick go out on the slot's channel. */
 	if (DUE(s->due_chan))
@@ -582,7 +584,99 @@ uint64_t awdl_sched_tick(struct awdl_sched *s) {
 	           MIN(s->due_unicast, s->due_multicast));
 }
 
+/*
+ * Block Ack session setup (IEEE 802.11 category 3). Accepting ADDBA made the
+ * test phone aggregate, but did not improve file goodput. Decline by default;
+ * --rx-aggregation enables controlled experiments with the hardware responder.
+ * Returns 1 when an ADDBA Request addressed to us was answered, 0 otherwise.
+ */
+static int answer_addba(struct awdl_sched *s, const uint8_t *frame, int len) {
+	if (len < 4) return 0;
+	unsigned rt = frame[2] | frame[3] << 8;
+	if (rt < 8 || len < (int) rt + 24 + 9) return 0;
+    const uint8_t *hdr = frame + rt;
+	if (hdr[0] != 0xd0) return 0; /* management, action */
+	if (memcmp(hdr + 4, s->awdl_state.self_address.ether_addr_octet, 6)) return 0;
+	const uint8_t *body = hdr + 24;
+	if (body[0] != 3 || body[1] != 0) return 0; /* Block Ack, ADDBA Request */
+	uint8_t token = body[2];
+	unsigned params = body[3] | body[4] << 8;
+	unsigned tid = (params >> 2) & 0xf;
+	unsigned buffer = params >> 6;
+	if (!buffer || buffer > 64) buffer = 64;
+	struct ether_addr peer;
+	memcpy(&peer, hdr + 10, 6);
+
+	uint8_t out[128];
+	int n = ieee80211_init_radiotap_header(out);
+	n += ieee80211_init_awdl_action_hdr(out + n, &s->awdl_state.self_address, &peer, &s->ieee80211_state);
+	unsigned reply = (params & 1) | 2 /* immediate Block Ack */ | (tid << 2) | (buffer << 6);
+	/* Aggregation stalled physical transfers; decline until explicitly tested. */
+	int accepted = s->rx_aggregation && (params & 2);
+	uint8_t resp[9] = {3, 1, token, accepted ? 0 : 37, 0, (uint8_t) reply, (uint8_t) (reply >> 8), 0, 0};
+	memcpy(out + n, resp, sizeof resp);
+	n += sizeof resp;
+	radio_send(s, out, n);
+	s->addba_answered++;
+	if (accepted) {
+		/* Starting Sequence Control follows the 2-byte timeout. */
+		uint16_t ssn = (uint16_t) ((body[7] | body[8] << 8) >> 4);
+		ba_reorder_stop(&s->ba, ba_release, s);
+		ba_reorder_start(&s->ba, ssn, buffer);
+		s->ba_peer = peer;
+		s->ba_tid = tid;
+	}
+	/* printf: the desktop captures the link's stdout, OWL's log_info does not reach it. */
+	printf("ADDBA request from %s tid %u buffer %u: %s with buffer %u\n", ether_ntoa(&peer), tid,
+	       params >> 6, accepted ? "accepted" : "declined (experimental RX aggregation off)", buffer);
+	fflush(stdout);
+	return 1;
+}
+
+static int process_frame(struct awdl_sched *s, const uint8_t *frame, int len);
+
+static void ba_release(void *ctx, const uint8_t *frame, int len) {
+	process_frame((struct awdl_sched *) ctx, frame, len);
+}
+
+/* Frames of the accepted Block Ack session go through the reorder buffer;
+ * returns 1 when the frame was consumed here. */
+static int ba_session_rx(struct awdl_sched *s, const uint8_t *frame, int len) {
+	if (!s->ba.active || len < 4) return 0;
+	unsigned rt = frame[2] | frame[3] << 8;
+	if (rt < 8 || len < (int) rt + 20) return 0;
+	const uint8_t *hdr = frame + rt;
+	if (memcmp(hdr + 4, s->awdl_state.self_address.ether_addr_octet, 6) || memcmp(hdr + 10, &s->ba_peer, 6))
+		return 0;
+	if (hdr[0] == 0x84) { /* BlockAckReq: control (2) | TID in bits 12-15, then SSC */
+		if ((unsigned) (hdr[17] >> 4) != s->ba_tid) return 1;
+		s->bar_seen++;
+		ba_reorder_bar(&s->ba, (uint16_t) ((hdr[18] | hdr[19] << 8) >> 4), ba_release, s);
+		return 1;
+	}
+	if (hdr[0] == 0xd0 && len >= (int) rt + 30 && hdr[24] == 3 && hdr[25] == 2) { /* DELBA */
+		s->delba_seen++;
+		ba_reorder_stop(&s->ba, ba_release, s);
+		printf("DELBA from %s: Block Ack session ended\n", ether_ntoa(&s->ba_peer));
+		fflush(stdout);
+		return 1;
+	}
+	if (hdr[0] != 0x88 || len < (int) rt + 26 || (hdr[24] & 0x0f) != s->ba_tid)
+		return 0; /* not QoS data of this session */
+	uint16_t seq = (uint16_t) ((hdr[22] | hdr[23] << 8) >> 4);
+	ba_reorder_rx(&s->ba, seq, frame, len, clock_time_us(), ba_release, s);
+	return 1;
+}
+
 int awdl_sched_radio_rx(struct awdl_sched *s, const uint8_t *frame, int len) {
+	if (answer_addba(s, frame, len))
+		return RX_OK;
+	if (ba_session_rx(s, frame, len))
+		return RX_OK;
+	return process_frame(s, frame, len);
+}
+
+static int process_frame(struct awdl_sched *s, const uint8_t *frame, int len) {
 	struct buf *data_arr[MAX_NUM_AMPDU];
 	struct buf **data = &data_arr[0];
 	const struct buf *b = buf_new_const(frame, len);
@@ -590,6 +684,14 @@ int awdl_sched_radio_rx(struct awdl_sched *s, const uint8_t *frame, int len) {
 
 	/* A failed aggregate may already have produced partial outputs. */
 	for (struct buf **d = data_arr; d < data; d++) {
+		if (result == RX_OK && buf_len(*d) > 1024) {
+			const uint8_t *eth = buf_data(*d);
+			if (eth[12] == 0x86 && eth[13] == 0xdd &&
+			    !memcmp(eth, s->awdl_state.self_address.ether_addr_octet, 6)) {
+				memcpy(&s->receive_peer, eth + 6, 6);
+				s->receive_peer_seen = clock_time_us();
+			}
+		}
 		if (result == RX_OK && s->deliver)
 			s->deliver(s->deliver_ctx, buf_data(*d), buf_len(*d));
 		buf_free(*d);

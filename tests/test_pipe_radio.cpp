@@ -159,6 +159,7 @@ TEST(pipe_radio, DISABLED_request_round_trip_benchmark) {
 }
 
 #include "frame_filter.h"
+
 TEST(pipe_radio, filters_ambient_traffic_without_losing_awdl_or_local_acks) {
     unsigned char self[6] = {2, 1, 2, 3, 4, 5}, frame[64]{};
     EXPECT_FALSE(radio_frame_wanted(frame, 0, self));
@@ -174,5 +175,24 @@ TEST(pipe_radio, filters_ambient_traffic_without_losing_awdl_or_local_acks) {
     frame[0] = 0x88; memcpy(frame + 16, "\x00\x25\x00\xff\x94\x73", 6);
     EXPECT_TRUE(radio_frame_wanted(frame, sizeof frame, self));
     frame[16] = 1;
+    EXPECT_FALSE(radio_frame_wanted(frame, sizeof frame, self));
+}
+
+TEST(pipe_radio, delivers_local_awdl_addba_to_responder_but_rejects_ambient_requests) {
+    unsigned char self[6] = {2, 1, 2, 3, 4, 5}, frame[33]{};
+    frame[0] = 0xd0;
+    memcpy(frame + 4, self, 6);
+    memcpy(frame + 16, "\x00\x25\x00\xff\x94\x73", 6);
+    frame[24] = 3; // Block Ack category
+    frame[25] = 0; // ADDBA Request
+    EXPECT_TRUE(radio_frame_wanted(frame, sizeof frame, self));
+    EXPECT_FALSE(radio_frame_wanted(frame, sizeof frame - 1, self));
+    frame[4] ^= 2;
+    EXPECT_FALSE(radio_frame_wanted(frame, sizeof frame, self));
+    frame[4] ^= 2;
+    frame[16] ^= 1;
+    EXPECT_FALSE(radio_frame_wanted(frame, sizeof frame, self));
+    frame[16] ^= 1;
+    frame[24] = 4;
     EXPECT_FALSE(radio_frame_wanted(frame, sizeof frame, self));
 }

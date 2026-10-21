@@ -388,6 +388,86 @@ TEST_F(Sim, directed_probe_is_parseable_and_preserves_group_announcements) {
     EXPECT_EQ(a.radio.sent.size(), 1u);
 }
 
+TEST_F(Sim, addba_declined_by_default_and_accepted_only_in_experimental_mode) {
+    auto &a = add(); auto &b = add();
+    // Radiotap (8 bytes) + management action header + ADDBA Request body from b to a.
+    std::vector<uint8_t> req = {0, 0, 8, 0, 0, 0, 0, 0, 0xd0, 0, 0, 0};
+    req.insert(req.end(), (uint8_t *) &a.addr, (uint8_t *) &a.addr + 6);
+    req.insert(req.end(), (uint8_t *) &b.addr, (uint8_t *) &b.addr + 6);
+    req.insert(req.end(), {0, 0x25, 0, 0xff, 0x94, 0x73, 0x10, 0});
+    unsigned params = 1 | 2 | (5 << 2) | (32 << 6); // A-MSDU, immediate, TID 5, buffer 32
+    req.insert(req.end(), {3, 0, 0x2a, (uint8_t) params, (uint8_t) (params >> 8), 0, 0, 0x10, 0});
+    size_t before = a.radio.sent.size();
+    EXPECT_FALSE(a.s.rx_aggregation);
+    ASSERT_EQ(awdl_sched_radio_rx(&a.s, req.data(), req.size()), RX_OK);
+    ASSERT_EQ(a.radio.sent.size(), before + 1);
+    const auto &decline = a.radio.sent.back();
+    unsigned drt = decline[2] | decline[3] << 8;
+    ASSERT_GE(decline.size(), drt + 24 + 9);
+    EXPECT_EQ(decline[drt + 27], 37);
+    EXPECT_EQ(decline[drt + 28], 0);
+    a.s.rx_aggregation = true;
+    EXPECT_EQ(awdl_sched_radio_rx(&a.s, req.data(), req.size()), RX_OK);
+    EXPECT_EQ(a.s.addba_answered, 2u);
+    ASSERT_EQ(a.radio.sent.size(), before + 2);
+    const auto &resp = a.radio.sent.back();
+    size_t rt = resp[2] | resp[3] << 8;
+    ASSERT_GE(resp.size(), rt + 24 + 9);
+    EXPECT_EQ(resp[rt], 0xd0);
+    EXPECT_EQ(memcmp(resp.data() + rt + 4, &b.addr, 6), 0);
+    EXPECT_EQ(memcmp(resp.data() + rt + 10, &a.addr, 6), 0);
+    const uint8_t *body = resp.data() + rt + 24;
+    EXPECT_EQ(body[0], 3); EXPECT_EQ(body[1], 1); EXPECT_EQ(body[2], 0x2a);
+    EXPECT_EQ(body[3] | body[4] << 8, 0); // status success
+    unsigned got = body[5] | body[6] << 8;
+    EXPECT_EQ((got >> 2) & 0xf, 5u);
+    EXPECT_EQ(got >> 6, 32u);
+    EXPECT_TRUE(got & 2);
+    // Not addressed to a: ignored, nothing sent.
+    req[rt + 4] ^= 1;
+    EXPECT_NE(awdl_sched_radio_rx(&a.s, req.data(), req.size()), RX_OK);
+    EXPECT_EQ(a.radio.sent.size(), before + 2);
+}
+
+TEST_F(Sim, accepted_block_ack_session_reorders_data_and_honours_bar_and_delba) {
+    auto &a = add(); auto &b = add();
+    a.s.rx_aggregation = true;
+    auto hdr = [&](uint8_t fc0, std::vector<uint8_t> tail) {
+        std::vector<uint8_t> f = {0, 0, 8, 0, 0, 0, 0, 0, fc0, 0, 0, 0};
+        f.insert(f.end(), (uint8_t *) &a.addr, (uint8_t *) &a.addr + 6);
+        f.insert(f.end(), (uint8_t *) &b.addr, (uint8_t *) &b.addr + 6);
+        f.insert(f.end(), tail.begin(), tail.end());
+        return f;
+    };
+    unsigned params = 2 | (5 << 2) | (32 << 6);
+    auto req = hdr(0xd0, {0, 0x25, 0, 0xff, 0x94, 0x73, 0, 0,
+                          3, 0, 1, (uint8_t) params, (uint8_t) (params >> 8), 0, 0, 0x10, 0}); // SSN 1
+    ASSERT_EQ(awdl_sched_radio_rx(&a.s, req.data(), req.size()), RX_OK);
+    ASSERT_TRUE(a.s.ba.active);
+    EXPECT_EQ(a.s.ba.head, 1);
+    auto data = [&](uint16_t seq, uint8_t tid) {
+        uint16_t sc = seq << 4;
+        return hdr(0x88, {0, 0x25, 0, 0xff, 0x94, 0x73, (uint8_t) sc, (uint8_t) (sc >> 8), tid, 0, 0xaa, 0xbb});
+    };
+    auto d3 = data(3, 5), d2 = data(2, 5), other = data(2, 6);
+    awdl_sched_radio_rx(&a.s, d3.data(), d3.size());
+    awdl_sched_radio_rx(&a.s, other.data(), other.size()); // another TID bypasses the buffer
+    EXPECT_EQ(a.s.ba.stored, 1u);                          // 3 waits for 1
+    awdl_sched_radio_rx(&a.s, d2.data(), d2.size());
+    EXPECT_EQ(a.s.ba.stored, 2u);                          // 2 and 3 wait for 1
+    uint16_t ssc = 2 << 4;
+    auto bar = hdr(0x84, {0x04, 5 << 4, (uint8_t) ssc, (uint8_t) (ssc >> 8)}); // BAR TID 5, SSN 2
+    EXPECT_EQ(awdl_sched_radio_rx(&a.s, bar.data(), bar.size()), RX_OK);
+    EXPECT_EQ(a.s.bar_seen, 1u);
+    EXPECT_EQ(a.s.ba.stored, 0u);
+    EXPECT_EQ(a.s.ba.head, 4);
+    EXPECT_EQ(a.s.ba.reordered, 2u);
+    auto delba = hdr(0xd0, {0, 0x25, 0, 0xff, 0x94, 0x73, 0, 0, 3, 2, 0, 0x50, 1, 0});
+    EXPECT_EQ(awdl_sched_radio_rx(&a.s, delba.data(), delba.size()), RX_OK);
+    EXPECT_EQ(a.s.delba_seen, 1u);
+    EXPECT_FALSE(a.s.ba.active);
+}
+
 TEST_F(Sim, native_service_records_are_in_mif_and_survive_owl_parsing) {
     auto &a = add(); auto &b = add();
     strcpy(a.s.awdl_state.name, "001122334455");
@@ -584,7 +664,28 @@ TEST(channel_match, nothing_happens_at_home_without_peers) {
         EXPECT_EQ(awdl_chan_match_step(&m, match_candidates, none, 2, 0, i), 0u);
 }
 
-TEST_F(Sim, slot_counts_and_new_channel_follow_valid_peers) {
+TEST_F(Sim, bulk_unicast_selects_sender_but_metadata_and_multicast_do_not) {
+    auto &a = add(); auto &b = add(); auto &c = add();
+    run_for(2000000);
+    auto small = eth_frame(a.addr, c.addr, "discovery metadata");
+    ASSERT_EQ(awdl_sched_host_tx(&c.s, small.data(), small.size()), 0);
+    run_for(1000000);
+    EXPECT_EQ(a.s.receive_peer_seen, 0u);
+    std::string payload(1200, 'x');
+    auto bulk = eth_frame(a.addr, b.addr, payload.c_str());
+    ASSERT_EQ(awdl_sched_host_tx(&b.s, bulk.data(), bulk.size()), 0);
+    run_for(1000000);
+    ASSERT_GT(a.s.receive_peer_seen, 0u);
+    EXPECT_EQ(memcmp(&a.s.receive_peer, &b.addr, sizeof b.addr), 0);
+    struct ether_addr group = {{0x33, 0x33, 0, 0, 0, 1}};
+    auto multicast = eth_frame(group, c.addr, payload.c_str());
+    ASSERT_EQ(awdl_sched_host_tx(&c.s, multicast.data(), multicast.size()), 0);
+    ASSERT_EQ(awdl_sched_host_tx(&c.s, small.data(), small.size()), 0);
+    run_for(1000000);
+    EXPECT_EQ(memcmp(&a.s.receive_peer, &b.addr, sizeof b.addr), 0);
+}
+
+TEST_F(Sim, slot_counts_and_new_channel_follow_only_active_sender) {
     auto &a = add();
     struct ether_addr phone = {{0x1e, 0x07, 0x09, 0xdc, 0x4a, 0x8e}};
     struct awdl_peer *p;
@@ -598,10 +699,81 @@ TEST_F(Sim, slot_counts_and_new_channel_follow_valid_peers) {
     p->is_valid = 0; p->has_sequence = 1;
     EXPECT_EQ(awdl_sched_count_slots(&a.s, match_candidates, 2, slots), 0); /* unvalidated peers do not count */
     p->is_valid = 1;
+    EXPECT_EQ(awdl_sched_count_slots(&a.s, match_candidates, 2, slots), 0); /* nearby is not an active sender */
+    a.s.receive_peer = phone;
+    a.s.receive_peer_seen = sim_now;
     EXPECT_EQ(awdl_sched_count_slots(&a.s, match_candidates, 2, slots), 1);
     EXPECT_EQ(slots[0], 2);
     EXPECT_EQ(slots[1], 6);
+    struct ether_addr mac = {{2, 1, 2, 3, 4, 5}};
+    struct awdl_peer *other;
+    awdl_peer_add(a.s.awdl_state.peers.peers, &mac, sim_now, nullptr, nullptr);
+    ASSERT_EQ(awdl_peer_get(a.s.awdl_state.peers.peers, &mac, &other), PEERS_OK);
+    other->is_valid = other->has_sequence = 1;
+    other->sequence_enc = AWDL_CHAN_ENC_OPCLASS;
+    struct awdl_chan other_channel = {{{149, 0x80}}};
+    awdl_chanseq_init_static(other->sequence, &other_channel);
+    EXPECT_EQ(awdl_sched_count_slots(&a.s, match_candidates, 2, slots), 1);
+    EXPECT_EQ(slots[0], 2); EXPECT_EQ(slots[1], 6);
+    sim_now += 5000001;
+    EXPECT_EQ(awdl_sched_count_slots(&a.s, match_candidates, 2, slots), 0);
+    EXPECT_EQ(slots[0], 0); EXPECT_EQ(slots[1], 0);
     awdl_sched_set_channel(&a.s, 36);
     EXPECT_EQ(awdl_chan_num(a.s.awdl_state.channel.master, AWDL_CHAN_ENC_OPCLASS), 36);
     EXPECT_EQ(awdl_chan_num(a.s.awdl_state.channel.current, a.s.awdl_state.channel.enc), 36);
+}
+
+namespace {
+struct Released {
+    std::vector<int> seqs;
+    static void cb(void *ctx, const uint8_t *frame, int len) {
+        ASSERT_EQ(len, 2);
+        static_cast<Released *>(ctx)->seqs.push_back(frame[0] | frame[1] << 8);
+    }
+};
+void feed(ba_reorder &r, Released &out, uint16_t seq, uint64_t now = 0) {
+    uint8_t f[2] = {(uint8_t) seq, (uint8_t) (seq >> 8)};
+    ba_reorder_rx(&r, seq, f, 2, now, Released::cb, &out);
+}
+} // namespace
+
+TEST(BaReorder, releases_in_sequence_order_and_drops_duplicates) {
+    ba_reorder r{}; Released out;
+    ba_reorder_start(&r, 0, 64);
+    feed(r, out, 0); feed(r, out, 2); feed(r, out, 3); feed(r, out, 1); feed(r, out, 2); feed(r, out, 0);
+    EXPECT_EQ(out.seqs, (std::vector<int>{0, 1, 2, 3}));
+    EXPECT_EQ(r.duplicates, 2u);
+    EXPECT_EQ(r.stored, 0u);
+    ba_reorder_stop(&r, Released::cb, &out);
+}
+
+TEST(BaReorder, timeout_and_block_ack_request_skip_holes) {
+    ba_reorder r{}; Released out;
+    ba_reorder_start(&r, 0, 64);
+    feed(r, out, 2, 1000);
+    ba_reorder_timeout(&r, 1000 + BA_REORDER_TIMEOUT_US - 1, Released::cb, &out);
+    EXPECT_TRUE(out.seqs.empty());
+    ba_reorder_timeout(&r, 1000 + BA_REORDER_TIMEOUT_US, Released::cb, &out);
+    EXPECT_EQ(out.seqs, (std::vector<int>{2}));
+    EXPECT_EQ(r.holes_skipped, 2u);
+    feed(r, out, 5); feed(r, out, 6);
+    ba_reorder_bar(&r, 5, Released::cb, &out);
+    EXPECT_EQ(out.seqs, (std::vector<int>{2, 5, 6}));
+    ba_reorder_bar(&r, 1, Released::cb, &out); // stale: ignored
+    EXPECT_EQ(r.head, 7);
+    ba_reorder_stop(&r, Released::cb, &out);
+}
+
+TEST(BaReorder, window_slides_and_wraps_sequence_space) {
+    ba_reorder r{}; Released out;
+    ba_reorder_start(&r, 4094, 4);
+    feed(r, out, 4095); feed(r, out, 4094); feed(r, out, 0);
+    EXPECT_EQ(out.seqs, (std::vector<int>{4094, 4095, 0}));
+    feed(r, out, 3);                 // holds 3, head stays 1
+    feed(r, out, 9);                 // beyond window 1..4: slides head to 6, releasing 3
+    EXPECT_EQ(out.seqs, (std::vector<int>{4094, 4095, 0, 3}));
+    EXPECT_EQ(r.head, 6);
+    ba_reorder_stop(&r, Released::cb, &out); // flushes 9
+    EXPECT_EQ(out.seqs.back(), 9);
+    EXPECT_FALSE(r.active);
 }

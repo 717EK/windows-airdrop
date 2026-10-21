@@ -10,6 +10,7 @@
 #include "radio.h"
 #include "state.h"
 #include "circular_buffer.h"
+#include "ba_reorder.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -31,6 +32,13 @@ struct awdl_sched {
 	void *deliver_ctx;
 	struct buf *unicast[AWDL_UNICAST_QUEUE];
 	unsigned unicast_count;
+	unsigned addba_answered; /* ADDBA Requests answered, including explicit declines */
+	bool rx_aggregation; /* experimental: enable only for traced throughput comparisons */
+	struct ba_reorder ba; /* receive reordering for the accepted Block Ack session */
+	struct ether_addr ba_peer;
+	unsigned ba_tid, bar_seen, delba_seen;
+	struct ether_addr receive_peer;
+	uint64_t receive_peer_seen; /* last large IPv6 unicast delivered to this node */
 	cbuf_handle_t tx_queue_multicast;
 	/* Absolute due times in us, AWDL_SCHED_IDLE when not armed. */
 	uint64_t due_chan, due_psf, due_mif, due_peers, due_unicast, due_multicast;
@@ -71,8 +79,8 @@ struct awdl_chan_match {
 	int gave_up; /* a move away stopped helping: stay home for the rest of the session */
 };
 
-/* Count the slots that valid peers advertise on each candidate channel.
- * Returns how many peers contributed. */
+/* Count only the active bulk sender's slots, never unrelated nearby devices.
+ * Returns 1 for a validated sender heard within 5 s, otherwise 0. */
 int awdl_sched_count_slots(struct awdl_sched *s, const unsigned *candidates, int n, int *slots);
 
 /* One matching decision. Returns the channel to retune to, or 0 to stay. */

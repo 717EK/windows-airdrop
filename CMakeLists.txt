@@ -69,7 +69,7 @@ add_library(radio_mock STATIC radio/mock_radio.c)
 target_include_directories(radio_mock PUBLIC radio)
 
 # Replaces OWL's daemon/core.c timing loop; no libev/libpcap/TAP.
-add_library(awdl_sched STATIC sched/awdl_sched.c sched/awdl_service.c)
+add_library(awdl_sched STATIC sched/awdl_sched.c sched/awdl_service.c sched/ba_reorder.c)
 target_include_directories(awdl_sched PUBLIC sched radio)
 target_link_libraries(awdl_sched PUBLIC awdl)
 

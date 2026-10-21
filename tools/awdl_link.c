@@ -70,7 +70,7 @@ static void peer_removed(struct awdl_peer *peer, void *ctx) {
 
 
 int main(int argc, char **argv) {
-    int probe = 0, listen = 0, fixed = 0, match = 0;
+    int probe = 0, listen = 0, fixed = 0, match = 0, rx_aggregation = 0;
     unsigned service_port = 0;
     unsigned data_rate = 12;
     const char *stop_file = NULL;
@@ -81,6 +81,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--listen")) listen = 1;
         else if (!strcmp(argv[i], "--fixed")) fixed = 1;
         else if (!strcmp(argv[i], "--match-channel")) match = 1;
+        else if (!strcmp(argv[i], "--rx-aggregation")) rx_aggregation = 1;
         else if (!strcmp(argv[i], "--data-rate") && i + 1 < argc) {
             const char *rate = argv[++i];
             if (!strcmp(rate, "12")) data_rate = 12;
@@ -96,6 +97,7 @@ int main(int argc, char **argv) {
         } else goto usage;
     }
     if (probe && listen) goto usage;
+    if (rx_aggregation && listen) goto usage;
     if (match && !fixed) goto usage; /* matching moves the one fixed channel */
     awdl_data_tx_rate = (struct ieee80211_tx_rate){ .legacy = data_rate, .mcs = -1, .sgi = 0 };
     char *end;
@@ -134,6 +136,19 @@ int main(int argc, char **argv) {
     struct awdl_sched s;
     awdl_sched_init(&s, hostname, &self, chan, &pipe_radio_backend, &r, tap_name ? deliver : NULL, &net);
     s.service_port = service_port;
+    /* The installed 0.2.5 desktop cannot pass --rx-aggregation; a marker file
+     * beside this executable turns the experiment on for that build. */
+    {
+        char marker[MAX_PATH];
+        DWORD n = GetModuleFileNameA(NULL, marker, sizeof marker);
+        char *slash = n && n < sizeof marker ? strrchr(marker, '\\') : NULL;
+        if (slash && (size_t) (slash - marker) + sizeof "\\rx-aggregation.enable" <= sizeof marker) {
+            strcpy(slash, "\\rx-aggregation.enable");
+            if (GetFileAttributesA(marker) != INVALID_FILE_ATTRIBUTES && !listen) rx_aggregation = 1;
+        }
+    }
+    s.rx_aggregation = rx_aggregation;
+    printf("rx_aggregation=%d\n", rx_aggregation);
     s.awdl_state.election.metric_first = 1;
     if (fixed) s.awdl_state.channel.strategy = AWDL_CHANSEQ_INTERSECT;
     /* Keep fixed_radio clear: that upstream option requests TX_NOACK for unicast. */
@@ -173,8 +188,11 @@ int main(int argc, char **argv) {
             tx_late_us = loop_now - s.due_unicast;
         uint64_t next = listen ? clock_time_us() + 10000 : awdl_sched_tick(&s);
         if (r.pipe == INVALID_HANDLE_VALUE) { failed = 1; break; }
-        /* Bound each drain so busy ambient traffic cannot starve the scheduler. */
-        for (int i = 0; i < 32; i++) {
+        unsigned drained = 0;
+        /* Bound each drain so busy ambient traffic cannot starve the scheduler. A
+         * 1.4 MB/s receive is ~1,000 frames/s in ~2 frame/ms bursts; 32 per ~1 ms
+         * loop let the bridge queue overflow (2026-10-19), 256 keeps headroom. */
+        for (int i = 0; i < 256; i++) {
             int n = pipe_radio_backend.capture(&r, frame, sizeof frame);
             if (n < 0) { failed = 1; break; }
             if (!n) break;
@@ -194,7 +212,11 @@ int main(int argc, char **argv) {
             }
             unsigned peers = awdl_peers_length(s.awdl_state.peers.peers);
             if (peers > peak_peers) peak_peers = peers;
-            if (clock_time_us() >= next) break;
+            drained++;
+            /* During a transfer a unicast (TCP ACK) is due almost always, so breaking
+             * on `next` after one frame capped RX at ~1 frame per loop (~1,000/s) and
+             * the bridge queue backed up ~1,000 frames (2026-10-19). Take at least 16. */
+            if (i >= 15 && clock_time_us() >= next) break;
         }
         if (failed || net.failed) { failed = 1; break; }
         if (match && clock_time_us() >= next_match) {
@@ -240,12 +262,17 @@ int main(int argc, char **argv) {
                 (unsigned long long)GetTickCount64(), loops, (unsigned long long)loop_us,
                 (unsigned long long)max_loop_us, (unsigned long long)tx_late_us,
                 s.unicast_count, queue_peak, s.awdl_state.stats.tx_data_unicast, received);
+            if (s.ba.active || s.bar_seen || s.delba_seen)
+                printf("ba active=%d in_order=%u reordered=%u duplicates=%u holes_skipped=%u held=%u bar=%u delba=%u\n",
+                    s.ba.active, s.ba.in_order, s.ba.reordered, s.ba.duplicates, s.ba.holes_skipped,
+                    s.ba.stored, s.bar_seen, s.delba_seen);
             fflush(stdout);
             metrics_at = clock_time_us() + 5000000;
             loops = queue_peak = 0; loop_us = max_loop_us = tx_late_us = 0;
         }
         if (failed) break;
-        Sleep(1);
+        /* Sleep only when idle: a loop that moved frames goes straight back for more. */
+        if (!drained && !s.unicast_count) Sleep(1);
     }
     printf("RX=%u OWL_OK=%u peers=%d peak_peers=%u ACK_to_local=%u action_attempts=%u directed_probes=%u bridge_failed=%d\n",
         received, accepted, awdl_peers_length(s.awdl_state.peers.peers), peak_peers, ack_to_self,
@@ -265,6 +292,6 @@ int main(int argc, char **argv) {
     awdl_netif_close(net.nif);
     return failed;
 usage:
-    fprintf(stderr, "usage: awdl_link <pipe> <6|36|44|149> <seconds 1..3600> [--probe|--listen] [--fixed [--match-channel]] [--data-rate 12|24] [--tap NAME] [--service-port PORT] [--stop-file PATH]\n");
+    fprintf(stderr, "usage: awdl_link <pipe> <6|36|44|149> <seconds 1..3600> [--probe|--listen] [--fixed [--match-channel]] [--data-rate 12|24] [--rx-aggregation] [--tap NAME] [--service-port PORT] [--stop-file PATH]\n");
     return 2;
 }
