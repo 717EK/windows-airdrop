@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Drawing.Drawing2D;
 using System.Media;
 
-namespace PulseDrop;
+namespace PulseIt;
 
 // Original two-note chime synthesized at startup (not Apple's AirDrop sound).
 static class Chime

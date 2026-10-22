@@ -1,4 +1,4 @@
-# Building PulseDrop
+# Building PulseIt
 
 Use Windows x64, Git/Git Bash, CMake 3.20+, Ninja, MinGW-w64 GCC, .NET 8 SDK and Python 3.11+. MSVC `cl` is unsupported for the OWL core. Keep a sibling `deps/` directory beside this checkout for downloads. Ordinary builds and tests do not install drivers.
 
@@ -22,7 +22,7 @@ In PowerShell at the repository root:
 py -3 -m venv ..\deps\airdrop-venv
 ..\deps\airdrop-venv\Scripts\python.exe -m pip install -r airdrop\requirements.txt
 ..\deps\airdrop-venv\Scripts\python.exe -m unittest discover -s tests -p 'test_*.py'
-dotnet build desktop\PulseDrop.csproj -c Release
+dotnet build desktop\PulseIt.csproj -c Release
 dotnet build tools\bleprobe\bleprobe.csproj -c Release
 ```
 
@@ -42,6 +42,6 @@ For the same dependency bootstrap locally, run `tools/bootstrap-ci.ps1`, build t
 
 `tools/build-installer.ps1` expects the native engines, sibling Python environment, signed TAP-Windows6 9.27.0 package under `../deps/tap-9.27.0/dist.win10/amd64`, MinGW and 7-Zip. Downloads are pinned in `installer/dependencies.json`. It is not a one-command bootstrap of a clean PC. See [installer notes](../installer/README.md).
 
-Device configuration is separate: `Setup-Devices.ps1 -Action Inspect` is read-only; `Configure` changes supported drivers and scoped firewall rules; `Restore` attempts to restore the saved vendor Wi-Fi driver. Inspect USB IDs first and close PulseDrop before configuration.
+Device configuration is separate: `Setup-Devices.ps1 -Action Inspect` is read-only; `Configure` changes supported drivers and scoped firewall rules; `Restore` attempts to restore the saved vendor Wi-Fi driver. Inspect USB IDs first and close PulseIt before configuration.
 
 Before distributing binaries, rebuild from reviewed public source, inspect embedded source/notices, sign the binaries/installer and validate clean-PC installation, transfers, cancellation, unplug/replug and restoration. Existing local installers may embed private historical documentation and must not be uploaded.

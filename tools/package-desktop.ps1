@@ -1,17 +1,17 @@
-param([string]$Destination = (Join-Path $PSScriptRoot '..\..\PulseDrop'), [switch]$NoShortcuts)
+param([string]$Destination = (Join-Path $PSScriptRoot '..\..\PulseIt'), [switch]$NoShortcuts)
 $ErrorActionPreference = 'Stop'
-# PulseDrop runs elevated, so the bundle and its Python runtime are locked to administrators (see the end).
+# PulseIt runs elevated, so the bundle and its Python runtime are locked to administrators (see the end).
 $awdlAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $awdlAdmin) { throw 'Run packaging as administrator: the bundle is locked against changes by non-admin processes.' }
 $awdlRepo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $awdlDeps = (Resolve-Path (Join-Path $awdlRepo '..\deps')).Path
 $awdlPython = Join-Path $awdlDeps 'airdrop-venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $awdlPython)) { throw 'Create the tested deps/airdrop-venv first.' }
-foreach ($awdlName in @('PulseDrop','awdl_link','devourer-bridge')) {
+foreach ($awdlName in @('PulseIt','awdl_link','devourer-bridge')) {
     if (Get-Process -Name $awdlName -ErrorAction SilentlyContinue) { throw "Close $awdlName before packaging; no running app will be overwritten." }
 }
 New-Item -ItemType Directory -Path $Destination -Force | Out-Null
-dotnet publish (Join-Path $awdlRepo 'desktop\PulseDrop.csproj') -c Release --self-contained false -o $Destination --verbosity quiet
+dotnet publish (Join-Path $awdlRepo 'desktop\PulseIt.csproj') -c Release --self-contained false -o $Destination --verbosity quiet
 if ($LASTEXITCODE) { throw 'Desktop build failed.' }
 $awdlEngine = Join-Path $Destination 'engine'
 New-Item -ItemType Directory -Path $awdlEngine -Force | Out-Null
@@ -39,10 +39,10 @@ foreach ($awdlLicenseName in @('COPYING3','COPYING3.LIB','COPYING.RUNTIME')) {
 Copy-Item -LiteralPath (Join-Path $awdlMingw '..\licenses\winpthreads\COPYING') -Destination (Join-Path $awdlLicenses 'winpthreads.txt')
 @{ PythonExe = $awdlPython } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Destination 'settings.json') -Encoding UTF8
 @"
-PulseDrop - quick local setup
+PulseIt - quick local setup
 
 1. Plug in the tested TP-Link Archer T3U (2357:012D, already using WinUSB).
-2. Open PulseDrop.exe and accept the Windows administrator prompt.
+2. Open PulseIt.exe and accept the Windows administrator prompt.
 3. Click Start receiving. On iPhone choose Share > AirDrop > Windows PC.
 4. Approve incoming files on this PC. Received files opens your Downloads folder.
 5. To send: unlock iPhone, refresh Everyone for 10 Minutes, Find devices,
@@ -68,11 +68,11 @@ That leaves existing drivers, received files and logs untouched.
 if (-not $NoShortcuts) {
     $awdlShell = New-Object -ComObject WScript.Shell
     foreach ($awdlShortcutPath in @(
-        (Join-Path ([Environment]::GetFolderPath('Desktop')) 'PulseDrop.lnk'),
-        (Join-Path ([Environment]::GetFolderPath('Programs')) 'PulseDrop.lnk')
+        (Join-Path ([Environment]::GetFolderPath('Desktop')) 'PulseIt.lnk'),
+        (Join-Path ([Environment]::GetFolderPath('Programs')) 'PulseIt.lnk')
     )) {
         $awdlShortcut = $awdlShell.CreateShortcut($awdlShortcutPath)
-        $awdlShortcut.TargetPath = Join-Path $Destination 'PulseDrop.exe'
+        $awdlShortcut.TargetPath = Join-Path $Destination 'PulseIt.exe'
         $awdlShortcut.WorkingDirectory = $Destination
         $awdlShortcut.Description = 'Native iPhone AirDrop with the TP-Link adapter'
         $awdlShortcut.Save()
@@ -86,4 +86,4 @@ foreach ($awdlLocked in @($Destination, (Split-Path (Split-Path $awdlPython)))) 
     if ($LASTEXITCODE) { throw "Could not lock $awdlLocked" }
     icacls (Join-Path $awdlLocked '*') /reset /T /C /Q | Out-Null
 }
-Write-Output "Ready: $Destination\PulseDrop.exe"
+Write-Output "Ready: $Destination\PulseIt.exe"

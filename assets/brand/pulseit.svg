@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title">
-  <title id="title">PulseDrop blue pulse logo</title>
+  <title id="title">PulseIt blue pulse logo</title>
   <defs><linearGradient id="blue" x1="0" y1="0" x2=".7" y2="1"><stop stop-color="#5ab4ff"/><stop offset="1" stop-color="#0a60eb"/></linearGradient></defs>
   <rect width="256" height="256" rx="32" fill="url(#blue)"/>
   <path d="M52 136H88L108 88L140 172L164 120H204" fill="none" stroke="white" stroke-width="16" stroke-linejoin="round" stroke-linecap="round"/>

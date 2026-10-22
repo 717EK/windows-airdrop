@@ -1,8 +1,8 @@
-PulseDrop for Windows x64 - local development build
+PulseIt for Windows x64 - local development build
 
 Plug in one TP-Link Archer T3U with USB ID 2357:012d. This setup includes the app, Python, .NET, TAP-Windows6 and a USB driver binding helper. No iPhone app is needed.
 
-Choosing adapter configuration switches this TP-Link USB adapter to WinUSB, so it cannot provide ordinary Wi-Fi while PulseDrop uses it. The original vendor driver is saved first; an already compatible Windows inbox driver is retained. Start menu > PulseDrop > Restore USB Wi-Fi driver reverses the binding. Other USB adapters and Intel Bluetooth are not targets.
+Choosing adapter configuration switches this TP-Link USB adapter to WinUSB, so it cannot provide ordinary Wi-Fi while PulseIt uses it. The original vendor driver is saved first; an already compatible Windows inbox driver is retained. Start menu > PulseIt > Restore USB Wi-Fi driver reverses the binding. Other USB adapters and Intel Bluetooth are not targets.
 
 The USB helper uses libwdi to create the device-specific signed catalog locally, using Windows' existing WinUSB system driver. Windows may request driver/certificate approval. Existing WinUSB and awdl0 installations are reused.
 

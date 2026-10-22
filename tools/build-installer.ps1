@@ -33,7 +33,7 @@ Get-ChildItem (Join-Path $repo 'airdrop') -File | Copy-Item -Destination (Join-P
 Copy-Item (Join-Path $repo 'build\awdl_link.exe'),(Join-Path $Deps 'devourer-bridge.exe') -Destination (Join-Path $stage 'engine') -Force
 $mingw = (Resolve-Path -LiteralPath $MingwRoot).Path
 foreach ($dll in @('libgcc_s_seh-1.dll','libstdc++-6.dll','libwinpthread-1.dll')) { Copy-Item (Join-Path $mingw "bin\$dll") -Destination (Join-Path $stage 'engine') -Force }
-Copy-Item (Join-Path $Deps 'pulsedrop-usb.exe') -Destination (Join-Path $stage 'drivers') -Force
+Copy-Item (Join-Path $Deps 'pulseit-usb.exe') -Destination (Join-Path $stage 'drivers') -Force
 Copy-Item (Join-Path $Deps 'tap-9.27.0\dist.win10\amd64\*') -Destination (Join-Path $stage 'drivers\tap') -Recurse -Force
 Copy-Item (Join-Path $repo 'desktop\RecoverBluetooth.ps1'),(Join-Path $repo 'installer\Setup-Devices.ps1'),(Join-Path $repo 'tools\install-awdl-tap.ps1'),(Join-Path $repo 'tools\configure-awdl-firewall.ps1') -Destination $stage -Force
 Copy-Item (Join-Path $repo 'assets') -Destination $stage -Recurse -Force
@@ -60,5 +60,5 @@ if (-not (Test-Path $compiler)) {
     if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'Pyrsys') { throw 'Compiler signature failed.' }
     Start-Process $setup -WindowStyle Hidden -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CURRENTUSER',("/DIR=" + (Join-Path $Deps 'inno-6.7.3'))) -Wait
 }
-& $compiler ("/DStage=$stage") (Join-Path $repo 'installer\PulseDrop.iss')
+& $compiler ("/DStage=$stage") (Join-Path $repo 'installer\PulseIt.iss')
 if ($LASTEXITCODE) { throw 'Setup compiler failed.' }

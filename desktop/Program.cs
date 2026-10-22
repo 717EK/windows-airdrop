@@ -1,7 +1,7 @@
 using System.Security.Principal;
 using System.Diagnostics;
 
-namespace PulseDrop;
+namespace PulseIt;
 
 static class Program
 {
@@ -13,17 +13,17 @@ static class Program
             var setup = new ProcessStartInfo("powershell.exe") { UseShellExecute = false, CreateNoWindow = true };
             foreach (var arg in new[] { "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", Path.Combine(AppContext.BaseDirectory, "Setup-Devices.ps1"), "-Action", args.Contains("--restore-driver") ? "Restore" : "Configure", "-Root", AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar) }) setup.ArgumentList.Add(arg);
             using var process = Process.Start(setup)!; process.WaitForExit();
-            MessageBox.Show(process.ExitCode == 0 ? "Adapter setup completed." : "Adapter setup failed. Close PulseDrop and check C:\\ProgramData\\PulseDrop\\setup.log.", "PulseDrop setup");
+            MessageBox.Show(process.ExitCode == 0 ? "Adapter setup completed." : "Adapter setup failed. Close PulseIt and check C:\\ProgramData\\PulseIt\\setup.log.", "PulseIt setup");
             return process.ExitCode;
         }
         if (args.Contains("--self-test")) return Checks.Run();
         if (args.Contains("--recovery-test")) return Checks.Recovery().GetAwaiter().GetResult();
         if (args.Contains("--lifecycle-soak-test")) return Checks.Lifecycle(10).GetAwaiter().GetResult();
         if (args.Contains("--lifecycle-test")) return Checks.Lifecycle().GetAwaiter().GetResult();
-        using var single = new Mutex(true, "Local\\PulseDrop.Desktop", out bool first);
-        if (!first && !args.Contains("--render")) { MessageBox.Show("PulseDrop is already open.", "PulseDrop"); return 0; }
+        using var single = new Mutex(true, "Local\\PulseIt.Desktop", out bool first);
+        if (!first && !args.Contains("--render")) { MessageBox.Show("PulseIt is already open.", "PulseIt"); return 0; }
         if (!args.Contains("--render") && !new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator))
-        { MessageBox.Show("Open PulseDrop.exe and accept the Windows administrator prompt to use awdl0.", "PulseDrop"); return 1; }
+        { MessageBox.Show("Open PulseIt.exe and accept the Windows administrator prompt to use awdl0.", "PulseIt"); return 1; }
         using var form = new MainForm(preview: args.Contains("--render"));
         if (args.Contains("--render"))
         {

@@ -6,11 +6,11 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <AssemblyName>PulseDrop</AssemblyName>
-    <ApplicationIcon>..\assets\brand\PulseDrop.ico</ApplicationIcon>
+    <AssemblyName>PulseIt</AssemblyName>
+    <ApplicationIcon>..\assets\brand\PulseIt.ico</ApplicationIcon>
     <Version>0.2.7</Version>
   </PropertyGroup>
   <ItemGroup>
-    <EmbeddedResource Include="..\assets\brand\PulseDrop.ico" LogicalName="PulseDrop.Icon" />
+    <EmbeddedResource Include="..\assets\brand\PulseIt.ico" LogicalName="PulseIt.Icon" />
   </ItemGroup>
 </Project>

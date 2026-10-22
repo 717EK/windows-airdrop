@@ -9,16 +9,16 @@ int main(int argc, char **argv) {
     struct wdi_options_install_driver install = {0};
     int count = 0, result;
     if (argc == 2 && !strcmp(argv[1], "--help")) {
-        puts("PulseDrop USB: only TP-Link 2357:012d. --inspect, --prepare DIR, --install DIR"); return 0;
+        puts("PulseIt USB: only TP-Link 2357:012d. --inspect, --prepare DIR, --install DIR"); return 0;
     }
     if (argc < 2 || (strcmp(argv[1], "--inspect") && strcmp(argv[1], "--prepare") && strcmp(argv[1], "--install"))) return 2;
     prepare.driver_type = WDI_WINUSB; prepare.vendor_name = "TP-Link";
     if (!strcmp(argv[1], "--prepare")) {
         struct wdi_device_info device = {0};
         if (argc != 3) return 2;
-        device.vid = 0x2357; device.pid = 0x012d; device.desc = "PulseDrop Archer T3U";
+        device.vid = 0x2357; device.pid = 0x012d; device.desc = "PulseIt Archer T3U";
         prepare.disable_cat = TRUE; prepare.disable_signing = TRUE;
-        result = wdi_prepare_driver(&device, argv[2], "pulsedrop-usb.inf", &prepare);
+        result = wdi_prepare_driver(&device, argv[2], "pulseit-usb.inf", &prepare);
         printf("Prepare: %s\n", wdi_strerror(result)); return result ? 1 : 0;
     }
     scan.list_all = TRUE;
@@ -32,8 +32,8 @@ int main(int argc, char **argv) {
     else if (target->driver && !_stricmp(target->driver, "WinUSB")) { puts("Already using WinUSB; unchanged."); result = 0; }
     else {
         install.pending_install_timeout = 120000;
-        result = wdi_prepare_driver(target, argv[2], "pulsedrop-usb.inf", &prepare);
-        if (!result) result = wdi_install_driver(target, argv[2], "pulsedrop-usb.inf", &install);
+        result = wdi_prepare_driver(target, argv[2], "pulseit-usb.inf", &prepare);
+        if (!result) result = wdi_install_driver(target, argv[2], "pulseit-usb.inf", &install);
         printf("USB driver: %s\n", wdi_strerror(result));
     }
     wdi_destroy_list(list); return result ? 1 : 0;

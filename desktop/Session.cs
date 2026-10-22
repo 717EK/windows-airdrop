@@ -6,7 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
-namespace PulseDrop;
+namespace PulseIt;
 
 sealed class BluetoothBusyException() : IOException("Windows blocked Bluetooth advertising. Recovery can briefly reconnect Bluetooth accessories.");
 
@@ -137,7 +137,7 @@ sealed class Session
         Python = Path.GetFullPath(config["PythonExe"], Base);
         try
         {
-            var profile = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(ProfileFile))!;
+            var profile = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(File.Exists(ProfileFile) ? ProfileFile : LegacyProfileFile))!;
             Name = CleanName(profile["name"]);
             if (Models.Any(m => m.Model == profile["model"])) Model = profile["model"];
             CompatibleSending = profile.GetValueOrDefault("compatibleSending") == "true";
@@ -311,7 +311,9 @@ sealed class Session
     public bool CompatibleSending { get; private set; }
     // Retune between 149 and 36 to follow where the phone actually spends its AWDL slots.
     public bool MatchChannel { get; private set; }
-    static string ProfileFile => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PulseDrop", "profile.json");
+    static string ProfileFile => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PulseIt", "profile.json");
+    // Profile saved before the rename from PulseDrop; read until the first save under the new name.
+    static string LegacyProfileFile => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PulseDrop", "profile.json");
     public static string CleanName(string name) => new string(name.Where(c => !char.IsControl(c)).ToArray()).Trim() is var clean && clean.Length is >= 1 and <= 40 ? clean : throw new ArgumentException("Use 1 to 40 characters for the name.");
     public void SaveProfile(string name, string model)
     {
@@ -355,7 +357,7 @@ sealed class Session
             Working = true; SetStatus("Checking setup...");
             cancel.Dispose(); cancel = new();
             lock (sync) { ++generation; candidates.Clear(); sessionWriteFailed = false; }
-            LogDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PulseDrop", "logs", DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N")[..6]);
+            LogDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PulseIt", "logs", DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N")[..6]);
             Directory.CreateDirectory(LogDirectory);
             LogDirectory = PhysicalDirectory(LogDirectory);
             StartupStage("setup");
@@ -370,7 +372,7 @@ sealed class Session
             Diagnostic("session", new { version = typeof(Session).Assembly.GetName().Version?.ToString(), Address, IfIndex, MatchChannel, CompatibleSending, python = Python });
             StartupStage("bridge pipe");
             stopFile = Path.Combine(LogDirectory, "stop.request");
-            string pipe = @"\\.\pipe\pulsedrop-" + Guid.NewGuid().ToString("N");
+            string pipe = @"\\.\pipe\pulseit-" + Guid.NewGuid().ToString("N");
             ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
             linkReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
             SetStatus("Starting the TP-Link adapter...");
@@ -430,7 +432,7 @@ sealed class Session
     async Task CleanupAsync()
     {
         Running = false; Working = true; Changed?.Invoke();
-        if (stopFile.Length > 0) await File.WriteAllTextAsync(stopFile, "PulseDrop requested shutdown");
+        if (stopFile.Length > 0) await File.WriteAllTextAsync(stopFile, "PulseIt requested shutdown");
         foreach (var p in new[] { link, bridge })
             if (p != null && !p.HasExited) { try { await p.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(8)); } catch (TimeoutException) { p.Kill(true); } }
         Process[] children; lock (sync) children = owned.ToArray();

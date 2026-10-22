@@ -15,17 +15,17 @@ skip = {'.git', 'build', 'bin', 'obj', '__pycache__', 'node_modules', '.venv', '
 local_roots = {'airdrop', 'assets', 'compat', 'desktop', 'installer', 'licenses', 'netif', 'patches', 'radio', 'sched', 'tests', 'tools', '.github'}
 local_files = {'CMakeLists.txt', '.gitattributes', '.gitignore', 'README.md', 'QUICK-START.html', 'LICENSE', 'COPYING', 'THIRD_PARTY_NOTICES.md', 'SECURITY.md', 'CONTRIBUTING.md', 'PRIVACY.md', 'CODE-SIGNING.md'}
 public_docs = {'docs/build.md', 'docs/architecture.md', 'docs/limitations.md', 'docs/signpath-readiness.md'}
-for name, root in [('PulseDrop', repo), ('OWL', repo / 'build/_deps/owl-src'), ('devourer', args.deps / 'devourer')]:
+for name, root in [('PulseIt', repo), ('OWL', repo / 'build/_deps/owl-src'), ('devourer', args.deps / 'devourer')]:
     with zipfile.ZipFile(args.stage / 'source' / (name + '.zip'), 'w', zipfile.ZIP_DEFLATED) as archive:
         for source in root.rglob('*'):
             relative = source.relative_to(root)
             if not source.is_file() or any(part in skip for part in relative.parts):
                 continue
             # Local handovers and test captures are not corresponding source.
-            if name == 'PulseDrop' and not (relative.parts[0] in local_roots or relative.as_posix() in local_files | public_docs):
+            if name == 'PulseIt' and not (relative.parts[0] in local_roots or relative.as_posix() in local_files | public_docs):
                 continue
             if (source.suffix in extensions or source.name in {'COPYING', 'LICENSE', 'CMakeLists.txt', 'Makefile', 'NOTICE', 'COPYING-LGPL'}
-                    or (name == 'PulseDrop' and relative.as_posix() in local_files)):
+                    or (name == 'PulseIt' and relative.as_posix() in local_files)):
                 archive.write(source, relative.as_posix())
 files = {}
 for file in sorted(args.stage.rglob('*')):

@@ -1,8 +1,8 @@
-# PulseDrop visual assets
+# PulseIt visual assets
 
-- `brand/pulsedrop.svg`: editable vector mark; the waveform is original to this project.
-- `brand/pulsedrop.png`: transparent 1024 px mark.
-- `brand/PulseDrop.ico`: Windows icon with 16, 24, 32, 48, 64, 128 and 256 px frames.
+- `brand/pulseit.svg`: editable vector mark; the waveform is original to this project.
+- `brand/pulseit.png`: transparent 1024 px mark.
+- `brand/PulseIt.ico`: Windows icon with 16, 24, 32, 48, 64, 128 and 256 px frames.
 - `installer/`: high-DPI welcome and small wizard bitmaps.
 - `readme/`: public vector diagrams and screenshots rendered with synthetic demo data.
 

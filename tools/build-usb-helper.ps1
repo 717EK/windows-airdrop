@@ -42,6 +42,6 @@ try {
     if ($LASTEXITCODE) { throw 'libwdi resource embedding failed.' }
     & windres -I. libwdi.rc -o libwdi-resource.o
     if ($LASTEXITCODE) { throw 'libwdi version resource failed.' }
-    & gcc -O2 -static -I.. -I. (Join-Path $repo 'tools\usb-driver.c') libwdi.c libwdi_dlg.c logging.c tokenizer.c vid_data.c pki.c libwdi-resource.o -o (Join-Path $Deps 'pulsedrop-usb.exe') -lsetupapi -lole32 -lntdll -lcomctl32 -luuid
+    & gcc -O2 -static -I.. -I. (Join-Path $repo 'tools\usb-driver.c') libwdi.c libwdi_dlg.c logging.c tokenizer.c vid_data.c pki.c libwdi-resource.o -o (Join-Path $Deps 'pulseit-usb.exe') -lsetupapi -lole32 -lntdll -lcomctl32 -luuid
     if ($LASTEXITCODE) { throw 'Target-specific USB installer build failed.' }
 } finally { Pop-Location }

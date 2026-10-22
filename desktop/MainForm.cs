@@ -1,6 +1,6 @@
 using System.Diagnostics;
 
-namespace PulseDrop;
+namespace PulseIt;
 
 sealed class MainForm : Form
 {
@@ -41,13 +41,13 @@ sealed class MainForm : Form
         demo = preview;
         SuspendLayout();
         AutoScaleDimensions = new SizeF(96F, 96F); AutoScaleMode = AutoScaleMode.Dpi;
-        Text = "PulseDrop"; FormBorderStyle = FormBorderStyle.None; ClientSize = new Size(480, 720);
-        using (var iconStream = typeof(MainForm).Assembly.GetManifestResourceStream("PulseDrop.Icon")!) Icon = new Icon(iconStream);
+        Text = "PulseIt"; FormBorderStyle = FormBorderStyle.None; ClientSize = new Size(480, 720);
+        using (var iconStream = typeof(MainForm).Assembly.GetManifestResourceStream("PulseIt.Icon")!) Icon = new Icon(iconStream);
         StartPosition = FormStartPosition.CenterScreen; BackColor = Theme.Back; ForeColor = Theme.Text; Font = Theme.UI(10); DoubleBuffered = true;
 
         // Header and window chrome.
         var icon = new AppIcon { Bounds = new Rectangle(24, 20, 56, 56) };
-        var title = new Label { Text = "PulseDrop", Font = new Font("Segoe UI", 16, FontStyle.Bold), Bounds = new Rectangle(94, 18, 220, 34) };
+        var title = new Label { Text = "PulseIt", Font = new Font("Segoe UI", 16, FontStyle.Bold), Bounds = new Rectangle(94, 18, 220, 34) };
         dot.Bounds = new Rectangle(96, 59, 8, 8);
         stateText.Bounds = new Rectangle(108, 52, 210, 22); stateText.Font = Theme.UI(9.5f); stateText.ForeColor = Theme.Secondary; stateText.AutoEllipsis = true;
         Glyph(edit, "", "Edit AirDrop name and icon", new Rectangle(320, 26, 34, 34));
@@ -110,20 +110,20 @@ sealed class MainForm : Form
         ResumeLayout();
 
         try { session = new Session(); }
-        catch (Exception e) { throw new IOException("PulseDrop setup is incomplete. Run tools/package-desktop.ps1 first.", e); }
+        catch (Exception e) { throw new IOException("PulseIt setup is incomplete. Run tools/package-desktop.ps1 first.", e); }
         fasterItem.Checked = session.CompatibleSending;
         fasterItem.Click += (_, _) => {
             try {
                 session.SetCompatibleSending(fasterItem.Checked);
                 sendHint.Text = fasterItem.Checked ? "Compatible sending (12 Mbit/s) enabled. Transfers are slower." : "Standard sending speed (54 Mbit/s) enabled.";
-            } catch (Exception e) { fasterItem.Checked = session.CompatibleSending; MessageBox.Show(this, e.Message, "PulseDrop"); }
+            } catch (Exception e) { fasterItem.Checked = session.CompatibleSending; MessageBox.Show(this, e.Message, "PulseIt"); }
         };
         matchItem.Checked = session.MatchChannel;
         matchItem.Click += (_, _) => {
             try {
                 session.SetMatchChannel(matchItem.Checked);
                 sendHint.Text = matchItem.Checked ? "The radio will follow the iPhone between channels 149 and 36." : "The radio will stay on channel 149.";
-            } catch (Exception e) { matchItem.Checked = session.MatchChannel; MessageBox.Show(this, e.Message, "PulseDrop"); }
+            } catch (Exception e) { matchItem.Checked = session.MatchChannel; MessageBox.Show(this, e.Message, "PulseIt"); }
         };
         session.Log += line => UI(() => Append(line)); session.Changed += () => UI(UpdateControls);
         session.DeviceFound += device => {
@@ -157,7 +157,7 @@ sealed class MainForm : Form
         help.Click += (_, _) => MessageBox.Show(this,
             "Receive: turn on receiving. On the iPhone choose Share → AirDrop → " + session.Name + ", then accept the request on this PC.\n\n" +
             "Send: unlock the iPhone, set AirDrop to Everyone for 10 Minutes, tap refresh, then press Send next to the device. One file up to 1 GiB.\n\n" +
-            "If no device appears, try Bluetooth recovery from the settings menu.", "PulseDrop help");
+            "If no device appears, try Bluetooth recovery from the settings menu.", "PulseIt help");
         toggle.Click += async (_, _) => await Toggle();
         turnOn.Click += async (_, _) => await Toggle();
         refresh.Click += async (_, _) => await Work(async () => { ClearDevices(); sendHint.Text = "Looking for nearby devices…"; await session.WakeAsync(); if (sendCancel == null) sendHint.Text = rows.Count > 0 ? "Press Send next to a device." : "No device yet. Refresh Everyone mode on the iPhone, or try Bluetooth recovery."; });
@@ -180,7 +180,7 @@ sealed class MainForm : Form
             if (closed) return;
             e.Cancel = true;
             if (closing) return;
-            if (e.CloseReason == CloseReason.UserClosing && !ConfirmInterrupt("Closing PulseDrop")) return;
+            if (e.CloseReason == CloseReason.UserClosing && !ConfirmInterrupt("Closing PulseIt")) return;
             closing = true; Enabled = false;
             await Task.Yield();
             try { sendCancel?.Cancel(); await session.StopAsync(); await session.WaitForRecoveryAsync(); await session.StopAsync(); }
@@ -299,10 +299,10 @@ sealed class MainForm : Form
     {
         if (session.LogDirectory.Length == 0) { Append("Start a session to create its diagnostics."); return; }
         using var dialog = new SaveFileDialog { Title = "Export diagnostic logs", Filter = "Diagnostic ZIP (*.zip)|*.zip",
-            FileName = "PulseDrop-diagnostics-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".zip", OverwritePrompt = false };
+            FileName = "PulseIt-diagnostics-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".zip", OverwritePrompt = false };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
         try { DiagnosticExport.Write(session.LogDirectory, dialog.FileName); Append("Diagnostics saved to " + dialog.FileName); }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { MessageBox.Show(this, "Could not export diagnostics. Choose a new filename.\n\n" + e.Message, "PulseDrop"); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { MessageBox.Show(this, "Could not export diagnostics. Choose a new filename.\n\n" + e.Message, "PulseIt"); }
     }
 
     void OpenDownloads() { Directory.CreateDirectory(session.Downloads); Open(session.Downloads); }
@@ -361,7 +361,7 @@ sealed class MainForm : Form
             await session.RecoverAsync();
             if (sendCancel == null) sendHint.Text = rows.Count > 0 ? "Press Send next to a device." : "Recovery finished. Refresh Everyone mode on the iPhone.";
             return true;
-        } catch (Exception e) { Append(e.Message); MessageBox.Show(this, e.Message, "PulseDrop"); return false; }
+        } catch (Exception e) { Append(e.Message); MessageBox.Show(this, e.Message, "PulseIt"); return false; }
     }
     async Task Work(Func<Task> action)
     {
@@ -369,7 +369,7 @@ sealed class MainForm : Form
         try { await action(); }
         catch (BluetoothBusyException) { await RecoverPrompt(); }
         catch (OperationCanceledException) { Append("Operation cancelled."); }
-        catch (Exception e) { Append(e.Message); MessageBox.Show(this, e.Message, "PulseDrop", MessageBoxButtons.OK, MessageBoxIcon.Information); }
+        catch (Exception e) { Append(e.Message); MessageBox.Show(this, e.Message, "PulseIt", MessageBoxButtons.OK, MessageBoxIcon.Information); }
         finally { busy = false; if (!IsDisposed) UpdateControls(); }
     }
     void AddDevice(Device device)
@@ -414,7 +414,7 @@ sealed class MainForm : Form
     }
     bool Transferring => !demo && (incoming != null || sendCancel != null);
     bool ConfirmInterrupt(string action) => !Transferring || MessageBox.Show(this,
-        $"A transfer is in progress. {action} now will cancel it.\n\nContinue?", "PulseDrop", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes;
+        $"A transfer is in progress. {action} now will cancel it.\n\nContinue?", "PulseIt", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes;
     void ClearDevices()
     {
         known.Clear();

@@ -1,4 +1,4 @@
-# Render the editable PulseDrop mark into Windows icon/setup formats. No extra packages.
+# Render the editable PulseIt mark into Windows icon/setup formats. No extra packages.
 param([string]$Root = (Join-Path $PSScriptRoot '..'))
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
@@ -30,7 +30,7 @@ function Mark-Bitmap([int]$Size) {
     return ,$bitmap
 }
 $logo = Mark-Bitmap 1024
-$logo.Save((Join-Path $brand 'pulsedrop.png'),[Drawing.Imaging.ImageFormat]::Png); $logo.Dispose()
+$logo.Save((Join-Path $brand 'pulseit.png'),[Drawing.Imaging.ImageFormat]::Png); $logo.Dispose()
 $sizes = @(16,24,32,48,64,128,256)
 $streams = @()
 foreach ($size in $sizes) {
@@ -39,7 +39,7 @@ foreach ($size in $sizes) {
     $bitmap.Save($stream,[Drawing.Imaging.ImageFormat]::Png)
     $streams += ,$stream.ToArray(); $stream.Dispose(); $bitmap.Dispose()
 }
-$file = [IO.File]::Create((Join-Path $brand 'PulseDrop.ico'))
+$file = [IO.File]::Create((Join-Path $brand 'PulseIt.ico'))
 $writer = [IO.BinaryWriter]::new($file)
 $writer.Write([uint16]0); $writer.Write([uint16]1); $writer.Write([uint16]$sizes.Count)
 $offset = 6 + 16 * $sizes.Count
@@ -62,7 +62,7 @@ $muted = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(160,180,205))
 $title = [Drawing.Font]::new('Segoe UI',17,[Drawing.FontStyle]::Bold,[Drawing.GraphicsUnit]::Pixel)
 $body = [Drawing.Font]::new('Segoe UI',13,[Drawing.FontStyle]::Regular,[Drawing.GraphicsUnit]::Pixel)
 $small = [Drawing.Font]::new('Segoe UI',10,[Drawing.FontStyle]::Regular,[Drawing.GraphicsUnit]::Pixel)
-$g.DrawString('PulseDrop',$title,$white,22,110)
+$g.DrawString('PulseIt',$title,$white,22,110)
 $g.DrawString("From phone.`nTo PC.`nAnd back.",$body,$muted,22,146)
 $g.DrawString("Windows x64`nDeveloper preview",$small,$muted,22,266)
 $panel.Save((Join-Path $setup 'wizard.bmp'),[Drawing.Imaging.ImageFormat]::Bmp)

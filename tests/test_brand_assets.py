@@ -8,7 +8,7 @@ import xml.etree.ElementTree as ET
 class BrandAssetsTests(unittest.TestCase):
     def test_icon_frames_and_setup_panels(self):
         root = Path(__file__).resolve().parents[1]
-        icon = (root / 'assets/brand/PulseDrop.ico').read_bytes()
+        icon = (root / 'assets/brand/PulseIt.ico').read_bytes()
         self.assertEqual(struct.unpack_from('<HHH', icon), (0, 1, 7))
         sizes = []
         for index in range(7):
@@ -23,9 +23,9 @@ class BrandAssetsTests(unittest.TestCase):
             data = (root / 'assets/installer' / name).read_bytes()
             self.assertEqual(data[:2], b'BM')
             self.assertEqual(struct.unpack_from('<ii', data, 18), dimensions)
-        project = ET.parse(root / 'desktop/PulseDrop.csproj').getroot()
+        project = ET.parse(root / 'desktop/PulseIt.csproj').getroot()
         self.assertTrue((root / 'desktop' / project.find('.//ApplicationIcon').text.replace('\\', '/')).is_file())
-        setup = (root / 'installer/PulseDrop.iss').read_text()
+        setup = (root / 'installer/PulseIt.iss').read_text()
         for setting in ('SetupIconFile', 'WizardImageFile', 'WizardSmallImageFile'):
             value = next(line.split('=', 1)[1] for line in setup.splitlines() if line.startswith(setting + '='))
             self.assertTrue((root / 'installer' / value.replace('\\', '/')).is_file())

@@ -1,7 +1,12 @@
 param([ValidateSet('Inspect','Configure','Restore','Cleanup')][string]$Action = 'Inspect', [string]$Root = $PSScriptRoot)
 $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path -LiteralPath $Root).Path
-$stateRoot = Join-Path $env:ProgramData 'PulseDrop'
+$stateRoot = Join-Path $env:ProgramData 'PulseIt'
+# Installs from before the rename keep the original driver backup under PulseDrop.
+$legacyRoot = Join-Path $env:ProgramData 'PulseDrop'
+if (-not (Test-Path $stateRoot) -and (Test-Path $legacyRoot)) {
+    try { Move-Item -LiteralPath $legacyRoot -Destination $stateRoot } catch { $stateRoot = $legacyRoot }
+}
 $devicePattern = '^USB\\VID_2357&PID_012D\\'
 function Device {
     $found = @(Get-PnpDevice -PresentOnly | Where-Object InstanceId -Match $devicePattern)
@@ -30,7 +35,7 @@ public static class PulseUsbRestore {
     if ($reboot) { Write-Output 'Windows requested a reboot to complete the driver change.' }
 }
 if ($Action -eq 'Cleanup') {
-    foreach ($name in @('PulseDrop TCP on awdl0','PulseDrop mDNS on awdl0')) {
+    foreach ($name in @('PulseIt TCP on awdl0','PulseIt mDNS on awdl0','PulseDrop TCP on awdl0','PulseDrop mDNS on awdl0')) {
         Get-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue | Where-Object {
             ($_ | Get-NetFirewallApplicationFilter).Program -eq (Join-Path $Root 'runtime\python.exe')
         } | Remove-NetFirewallRule
@@ -45,7 +50,7 @@ if ($Action -eq 'Inspect') {
     return
 }
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Administrator approval is required.' }
-if (Get-Process PulseDrop,awdl_link,devourer-bridge -ErrorAction SilentlyContinue) { throw 'Close PulseDrop before changing its setup or USB driver.' }
+if (Get-Process PulseIt,PulseDrop,awdl_link,devourer-bridge -ErrorAction SilentlyContinue) { throw 'Close PulseIt before changing its setup or USB driver.' }
 New-Item -ItemType Directory $stateRoot -Force | Out-Null
 & icacls $stateRoot /inheritance:r /grant:r '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' | Out-Null
 if ($LASTEXITCODE) { throw 'Cannot protect setup state.' }
@@ -56,7 +61,7 @@ try {
         $inf = RestoreInf
         ForceDriver $inf
         if ((Service $device.InstanceId) -eq 'WinUSB') { throw 'Windows still reports WinUSB after restoration.' }
-        Write-Output 'The TP-Link Wi-Fi driver is restored. PulseDrop needs WinUSB again before it can use this adapter.'
+        Write-Output 'The TP-Link Wi-Fi driver is restored. PulseIt needs WinUSB again before it can use this adapter.'
         return
     }
     $manifest = Get-Content (Join-Path $Root 'payload-sha256.json') -Raw | ConvertFrom-Json
@@ -70,7 +75,7 @@ try {
     }
     $tap = Get-NetAdapter -Name awdl0
     if ($tap.InterfaceDescription -notlike 'TAP-Windows Adapter V9*') { throw 'awdl0 is not the supported TAP adapter; no USB change made.' }
-    & (Join-Path $Root 'configure-awdl-firewall.ps1') -PythonExe (Join-Path $Root 'runtime\python.exe') -RulePrefix PulseDrop
+    & (Join-Path $Root 'configure-awdl-firewall.ps1') -PythonExe (Join-Path $Root 'runtime\python.exe') -RulePrefix PulseIt
     if ((Service $device.InstanceId) -ne 'WinUSB') {
         $driver = Get-CimInstance Win32_PnPSignedDriver | Where-Object DeviceID -EQ $device.InstanceId
         $backup = Join-Path $stateRoot 'original-driver'
@@ -87,7 +92,7 @@ try {
         } else { throw 'Cannot preserve this original driver; USB was not changed.' }
         }
         try {
-            & (Join-Path $Root 'drivers\pulsedrop-usb.exe') --install (Join-Path $stateRoot 'winusb')
+            & (Join-Path $Root 'drivers\pulseit-usb.exe') --install (Join-Path $stateRoot 'winusb')
             if ($LASTEXITCODE) { throw 'WinUSB installation failed.' }
             if ((Service $device.InstanceId) -ne 'WinUSB') { throw 'Windows did not bind WinUSB.' }
         } catch {
@@ -97,5 +102,5 @@ try {
         }
     }
     @{configured=$true;device=$device.InstanceId;time=(Get-Date).ToString('o')} | ConvertTo-Json | Set-Content (Join-Path $stateRoot 'setup-result.json') -Encoding UTF8
-    Write-Output 'PulseDrop setup is ready.'
+    Write-Output 'PulseIt setup is ready.'
 } finally { Stop-Transcript | Out-Null }

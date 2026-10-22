@@ -16,6 +16,6 @@ jobs:
           dotnet-version: '8.0.x'
       - run: python -m pip install -r installer/requirements.txt
       - run: python -m unittest discover -s tests -p 'test_*.py'
-      - run: dotnet build desktop/PulseDrop.csproj -c Release
+      - run: dotnet build desktop/PulseIt.csproj -c Release
       - run: dotnet build tools/bleprobe/bleprobe.csproj -c Release
       # Native MinGW/hardware qualification: docs/build.md.

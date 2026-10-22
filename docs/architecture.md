@@ -1,6 +1,6 @@
 # Architecture
 
-`PulseDrop.exe` supervises the native link, standalone radio bridge, Python HTTPS receiver/sender and BLE helper. Helpers belong to a session and are drained or stopped when it ends. Readiness reports the failing startup stage and helper exit instead of a generic timeout.
+`PulseIt.exe` supervises the native link, standalone radio bridge, Python HTTPS receiver/sender and BLE helper. Helpers belong to a session and are drained or stopped when it ends. Readiness reports the failing startup stage and helper exit instead of a generic timeout.
 
 `awdl_link.exe` links GPL-3.0-or-later OWL. It drives synchronization, peers, scheduled frames and a TAP-Windows6 interface. `devourer-bridge.exe` is a separate GPL-2.0-only executable owning USB, RX, injection, channel and hardware ACK identity. They exchange bounded messages over a local single-client named pipe. The shared protocol and frame filter are MIT licensed; neither build links the other project's objects.
 

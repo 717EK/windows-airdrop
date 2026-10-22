@@ -1,6 +1,6 @@
 using System.Diagnostics;
 
-namespace PulseDrop;
+namespace PulseIt;
 
 static class Checks
 {
@@ -9,15 +9,15 @@ static class Checks
     {
         try
         {
-            string logs = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PulseDrop", "path-check-" + Guid.NewGuid().ToString("N"));
+            string logs = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PulseIt", "path-check-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(logs);
             try {
                 string physical = Session.PhysicalDirectory(logs);
                 Assert(Directory.Exists(physical), "physical log directory exists");
                 Assert(Directory.GetFiles(physical).Length == 0, "path marker cleaned up");
                 var check = new ProcessStartInfo("powershell.exe") { UseShellExecute = false, CreateNoWindow = true };
-                check.Environment["PULSEDROP_LOG_CHECK"] = physical;
-                foreach (var arg in new[] { "-NoProfile", "-Command", "if (-not (Test-Path -LiteralPath $env:PULSEDROP_LOG_CHECK)) { exit 1 }" }) check.ArgumentList.Add(arg);
+                check.Environment["PULSEIT_LOG_CHECK"] = physical;
+                foreach (var arg in new[] { "-NoProfile", "-Command", "if (-not (Test-Path -LiteralPath $env:PULSEIT_LOG_CHECK)) { exit 1 }" }) check.ArgumentList.Add(arg);
                 using var child = Process.Start(check)!;
                 Assert(child.WaitForExit(10000), "helper path check completed");
                 Assert(child.ExitCode == 0, "PowerShell can access the resolved log directory");
@@ -42,7 +42,7 @@ static class Checks
             Assert(Session.FriendlyLine("link", "channel matched 36 -> 149 (peer slots: 149=0 36=0, peers=0)")!.Contains("149"), "return to 149 shown");
             Assert(Session.FriendlyLine("link", "channel match reverted 36 -> 149 (peer slots: 149=2 36=1, peers=1)")!.Contains("didn't help"), "revert shown");
             Assert(Session.FriendlyLine("recovery", "Bluetooth AirDrop advertising started without switching Bluetooth off.") != null, "soft recovery shown");
-            var exportRoot = Directory.CreateTempSubdirectory("PulseDrop-export-check-");
+            var exportRoot = Directory.CreateTempSubdirectory("PulseIt-export-check-");
             try {
                 File.WriteAllText(Path.Combine(exportRoot.FullName, "sender.log"), "transfer evidence");
                 string publisherLog = Path.Combine(exportRoot.FullName, "recovery-bluetooth-soft.stdout.log");
@@ -65,7 +65,7 @@ static class Checks
                 using (var zip = System.IO.Compression.ZipFile.OpenRead(bounded)) Assert(zip.GetEntry("sender.log")!.Length == 64L * 1024 * 1024, "export is bounded while logs grow");
             } finally {
                 string owned = Path.GetFullPath(exportRoot.FullName);
-                Assert(owned.StartsWith(Path.GetFullPath(Path.GetTempPath()), StringComparison.OrdinalIgnoreCase) && exportRoot.Name.StartsWith("PulseDrop-export-check-"), "cleanup remains in the owned temporary directory");
+                Assert(owned.StartsWith(Path.GetFullPath(Path.GetTempPath()), StringComparison.OrdinalIgnoreCase) && exportRoot.Name.StartsWith("PulseIt-export-check-"), "cleanup remains in the owned temporary directory");
                 Directory.Delete(owned, true);
             }
             var session = new Session();

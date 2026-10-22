@@ -12,7 +12,7 @@ from streaming import prepare, receive
 
 with tempfile.TemporaryDirectory() as folder:
     root = Path(folder)
-    for label, block in [('text', (b'PulseDrop lossless document transfer.\n' * 2000)[:65536]),
+    for label, block in [('text', (b'PulseIt lossless document transfer.\n' * 2000)[:65536]),
                          ('incompressible', os.urandom(65536))]:
         source = root / (label + '.bin')
         with source.open('wb') as out:

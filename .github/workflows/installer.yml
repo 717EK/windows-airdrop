@@ -50,20 +50,20 @@ jobs:
       - name: Desktop self-check and packaged Python regressions
         shell: powershell
         run: |
-          dotnet build/installer-stage/PulseDrop.dll --self-test
+          dotnet build/installer-stage/PulseIt.dll --self-test
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           & build/installer-stage/runtime/python.exe -E -s -X utf8 -m unittest discover -s tests -p 'test_*.py'
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Record build origin and artifact hash
         shell: powershell
         run: |
-          $installer = Get-Item dist/PulseDrop-Setup-0.2.7-x64.exe
+          $installer = Get-Item dist/PulseIt-Setup-0.2.7-x64.exe
           @{ source_revision=$env:GITHUB_SHA; run_id=$env:GITHUB_RUN_ID; image_version=$env:ImageVersion; signed=$false; sha256=(Get-FileHash $installer.FullName).Hash } | ConvertTo-Json | Set-Content dist/build-origin.json -Encoding utf8
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: PulseDrop-unsigned-development-${{ github.sha }}
+          name: PulseIt-unsigned-development-${{ github.sha }}
           path: |
-            dist/PulseDrop-Setup-0.2.7-x64.exe
+            dist/PulseIt-Setup-0.2.7-x64.exe
             dist/build-origin.json
             build/installer-stage/source/*.zip
             build/installer-stage/payload-sha256.json

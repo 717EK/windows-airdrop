@@ -2,7 +2,7 @@ using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace PulseDrop;
+namespace PulseIt;
 
 static class Theme
 {
@@ -162,7 +162,7 @@ sealed class Dot : Control
     }
 }
 
-// PulseDrop mark; coordinates match assets/brand/pulsedrop.svg.
+// PulseIt mark; coordinates match assets/brand/pulseit.svg.
 sealed class AppIcon : Control
 {
     public bool On = true;
