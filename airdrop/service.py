@@ -104,8 +104,11 @@ def read_body(handler, limit, complete=None, progress=None, target=None, quick=N
                             done = None
                             if quick and received != quick_checked:
                                 quick_checked = received
+                                # The probe filters; the full check proves it before we stop reading.
                                 if is_complete(quick):
-                                    done = 'quick probe'
+                                    checked = received
+                                    if is_complete():
+                                        done = 'quick probe, full check'
                             if done is None and received != checked and \
                                     time.monotonic() - quiet_since >= FULL_STALL_SECONDS - 0.01:
                                 checked = received

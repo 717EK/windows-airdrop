@@ -128,13 +128,56 @@ def unpack(source, directory=None, approved=None, mark=None):
             if mark and directory is not None: mark(directory / output)
             receipts.append({'received': output, 'bytes': size, 'sha256': digest.hexdigest()})
 
+TAIL_KEEP = 8192  # decoded bytes kept from the end of a block for the probe
+
+def _block_tail(source, start):
+    """Last TAIL_KEEP decoded bytes of the DVZip block at start, inflating in
+    BLOCK-sized steps so memory stays bounded whatever the block size."""
+    source.seek(start)
+    value, = struct.unpack('>I', exact(source, 4))
+    left = value & 0x7fffffff
+    if value & 0x80000000:
+        skip = max(0, left - TAIL_KEEP)
+        source.seek(start + 4 + skip)
+        return exact(source, left - skip)
+    decoder = zlib.decompressobj(15)
+    tail = b''
+    while left:
+        data = exact(source, min(BLOCK, left))
+        left -= len(data)
+        while data:
+            tail = (tail + decoder.decompress(data, BLOCK))[-TAIL_KEEP:]
+            data = decoder.unconsumed_tail
+    tail = (tail + decoder.flush())[-TAIL_KEEP:]
+    if not decoder.eof or decoder.unused_data:
+        raise ValueError('incomplete compressed block')
+    return tail
+
+def _ends_with_trailer_record(tail):
+    """True when tail ends with a CPIO trailer record (odc or newc header for a
+    zero-size entry named TRAILER!!!) followed only by zero padding. File data
+    that merely contains the name does not carry a matching header."""
+    at = tail.rfind(b'TRAILER!!!\x00')
+    if at < 0 or any(tail[at + 11:]):
+        return False
+    odc = tail[at - 76:at] if at >= 76 else b''
+    if odc[:6] == b'070707' and odc[59:65] == b'000013' and odc[65:76] == b'0' * 11:
+        return True
+    newc = tail[at - 110:at] if at >= 110 else b''
+    if newc[:6] == b'070701':
+        try:
+            return int(newc[94:102], 16) == 11 and int(newc[54:62], 16) == 0
+        except ValueError:
+            return False
+    return False
+
 def likely_complete(source):
     """Cheap end-of-upload probe for a DVZip archive: the block headers tile the
-    file exactly and the last block decodes to a CPIO trailer followed only by
-    padding. It reads the headers and one block, not the whole archive, so the
-    receiver can probe after a short stall; receive() still validates everything.
-    A false result is not final: the caller keeps the slower full check as a
-    fallback. Raw gzip archives have no block structure and use complete()."""
+    file exactly and the archive ends with a CPIO trailer record. It reads the
+    block headers and the ends of the last two blocks, with bounded memory, so
+    the receiver can probe after a short stall. It is a filter, not proof: the
+    caller confirms with complete() before ending the upload. Raw gzip archives
+    have no block structure and use complete()."""
     if isinstance(source, (bytes, bytearray)):
         source = io.BytesIO(source)
     try:
@@ -159,17 +202,8 @@ def likely_complete(source):
             position += 4 + size
         tail = b''
         for start in starts:  # the trailer record may straddle the last two blocks
-            source.seek(start)
-            value, = struct.unpack('>I', source.read(4))
-            body = source.read(value & 0x7fffffff)
-            if not value & 0x80000000:
-                decoder = zlib.decompressobj(15)
-                body = decoder.decompress(body, MAX_ARCHIVE_BYTES)
-                if not decoder.eof or decoder.unused_data:
-                    return False
-            tail = tail[-4096:] + body
-        at = tail.rfind(b'TRAILER!!!\x00')
-        return at >= 0 and not any(tail[at + 11:])
+            tail = (tail + _block_tail(source, start))[-TAIL_KEEP:]
+        return _ends_with_trailer_record(tail)
     except (OSError, ValueError, OverflowError, zlib.error):
         return False
     finally:

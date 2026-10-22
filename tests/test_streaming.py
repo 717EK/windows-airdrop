@@ -9,6 +9,7 @@ import sys
 import tempfile
 import tracemalloc
 import unittest
+import zlib
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'airdrop'))
 import streaming
@@ -124,5 +125,28 @@ class StreamingTests(unittest.TestCase):
         zipped = gzip.compress(encode_cpio([('g.txt', b'gzip')]))
         self.assertTrue(streaming.likely_complete(io.BytesIO(zipped)))
         self.assertFalse(streaming.likely_complete(io.BytesIO(zipped[:-4])))
+
+    def test_likely_complete_ignores_trailer_name_inside_file_data(self):
+        payload = b'x' * 1000 + b'TRAILER!!!\x00' + b'\0' * 32
+        archive = encode_cpio([('fake.bin', payload)])
+        cut = archive.index(payload) + len(payload)  # block ends right after the fake name
+        stored = lambda data: (0x80000000 | len(data)).to_bytes(4, 'big') + data
+        first = stored(archive[:cut])
+        self.assertFalse(streaming.likely_complete(io.BytesIO(first)))
+        whole = first + stored(archive[cut:])
+        self.assertTrue(streaming.likely_complete(io.BytesIO(whole)))
+        self.assertTrue(streaming.complete(io.BytesIO(whole)))
+
+    def test_likely_complete_memory_is_bounded_for_a_large_compressed_block(self):
+        archive = encode_cpio([('big.txt', b'PulseDrop text line\n' * (32 * 1024 * 1024 // 20))])
+        data = zlib.compress(archive)
+        body = io.BytesIO(len(data).to_bytes(4, 'big') + data)
+        tracemalloc.start()
+        try:
+            self.assertTrue(streaming.likely_complete(body))
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        self.assertLess(peak, 4 * 1024 * 1024)
 
 if __name__=='__main__': unittest.main()
