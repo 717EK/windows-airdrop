@@ -591,7 +591,7 @@ uint64_t awdl_sched_tick(struct awdl_sched *s) {
  * Returns 1 when an ADDBA Request addressed to us was answered, 0 otherwise.
  */
 static int answer_addba(struct awdl_sched *s, const uint8_t *frame, int len) {
-	if (len < 4) return 0;
+	if (len < 4 || s->listen_only) return 0; /* a passive observer never transmits */
 	unsigned rt = frame[2] | frame[3] << 8;
 	if (rt < 8 || len < (int) rt + 24 + 9) return 0;
     const uint8_t *hdr = frame + rt;

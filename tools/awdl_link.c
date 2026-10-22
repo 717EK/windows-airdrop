@@ -148,6 +148,7 @@ int main(int argc, char **argv) {
         }
     }
     s.rx_aggregation = rx_aggregation;
+    s.listen_only = listen;
     printf("rx_aggregation=%d\n", rx_aggregation);
     s.awdl_state.election.metric_first = 1;
     if (fixed) s.awdl_state.channel.strategy = AWDL_CHANSEQ_INTERSECT;

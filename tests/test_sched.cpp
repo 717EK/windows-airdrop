@@ -429,6 +429,20 @@ TEST_F(Sim, addba_declined_by_default_and_accepted_only_in_experimental_mode) {
     EXPECT_EQ(a.radio.sent.size(), before + 2);
 }
 
+TEST_F(Sim, listen_only_link_does_not_answer_addba) {
+    auto &a = add(); auto &b = add();
+    a.s.listen_only = true;
+    unsigned params = 2 | (64 << 6);
+    std::vector<uint8_t> f = {0, 0, 8, 0, 0, 0, 0, 0, 0xd0, 0, 0, 0};
+    f.insert(f.end(), (uint8_t *) &a.addr, (uint8_t *) &a.addr + 6);
+    f.insert(f.end(), (uint8_t *) &b.addr, (uint8_t *) &b.addr + 6);
+    f.insert(f.end(), {0, 0x25, 0, 0xff, 0x94, 0x73, 0, 0, 3, 0, 1, (uint8_t) params, (uint8_t) (params >> 8), 0, 0, 0x10, 0});
+    size_t before = a.radio.sent.size();
+    awdl_sched_radio_rx(&a.s, f.data(), f.size());
+    EXPECT_EQ(a.radio.sent.size(), before);
+    EXPECT_EQ(a.s.addba_answered, 0u);
+}
+
 TEST_F(Sim, active_block_ack_session_declines_other_peers_and_keeps_window_on_retransmit) {
     auto &a = add(); auto &b = add(); auto &c = add();
     a.s.rx_aggregation = true;

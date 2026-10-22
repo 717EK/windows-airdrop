@@ -34,6 +34,7 @@ struct awdl_sched {
 	unsigned unicast_count;
 	unsigned addba_answered; /* ADDBA Requests answered, including explicit declines */
 	bool rx_aggregation; /* experimental: enable only for traced throughput comparisons */
+	bool listen_only; /* awdl_link --listen: never transmit, not even ADDBA responses */
 	struct ba_reorder ba; /* receive reordering for the accepted Block Ack session */
 	struct ether_addr ba_peer;
 	unsigned ba_tid, bar_seen, delba_seen;
