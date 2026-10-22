@@ -77,7 +77,7 @@ For a bug report, include the revision, adapter USB ID, direction, file size and
 Receiving an **80 MB file from an iPhone takes about 14–20 seconds (roughly 4–6 MB/s)**, down from about two minutes in 0.2.7. A Mac receives the same file in under 5 seconds, so there is still a gap. What changed:
 
 - **80 MHz receive.** On channels 149, 36 and 44 the radio now listens at 80 MHz and the link advertises VHT, so the phone sends at its fastest rates. Start the bridge with `--width20` to go back to 20 MHz.
-- **Block Ack reordering.** Aggregated frames the phone retransmits are put back in order before TCP sees them, instead of triggering slow recovery.
+- **Block Ack reordering.** Aggregated frames the phone retransmits are put back in order before TCP sees them, instead of triggering slow recovery. It is on by default; start the link with `--no-rx-aggregation` to turn it off.
 - **Cheaper replies.** Our TCP acknowledgements go out at 54 Mbit/s instead of 12, and back-to-back acknowledgements are merged (at most one per queued frame), so they use less of the phone's airtime.
 - **Faster finish.** The receiver recognises the end of the upload after a quarter-second pause instead of waiting for a final chunk the iPhone never sends.
 - **Quiet radio logging** by default, so per-frame logging no longer stalls the bridge.

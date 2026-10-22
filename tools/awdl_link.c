@@ -70,7 +70,7 @@ static void peer_removed(struct awdl_peer *peer, void *ctx) {
 
 
 int main(int argc, char **argv) {
-    int probe = 0, listen = 0, fixed = 0, match = 0, rx_aggregation = 0, ack_merge = 1;
+    int probe = 0, listen = 0, fixed = 0, match = 0, rx_aggregation = 1, ack_merge = 1;
     unsigned service_port = 0;
     /* Unicast data rate. While receiving, almost every unicast is a TCP ACK; at 12 Mbit/s
      * they took most of the phone's on-channel airtime. 54 cut an 80 MB receive from
@@ -84,7 +84,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--listen")) listen = 1;
         else if (!strcmp(argv[i], "--fixed")) fixed = 1;
         else if (!strcmp(argv[i], "--match-channel")) match = 1;
-        else if (!strcmp(argv[i], "--rx-aggregation")) rx_aggregation = 1;
+        else if (!strcmp(argv[i], "--rx-aggregation")) rx_aggregation = 1; /* the default; kept for old callers */
+        else if (!strcmp(argv[i], "--no-rx-aggregation")) rx_aggregation = 0;
         else if (!strcmp(argv[i], "--no-ack-merge")) ack_merge = 0;
         else if (!strcmp(argv[i], "--data-rate") && i + 1 < argc) {
             const char *rate = argv[++i];
@@ -102,7 +103,6 @@ int main(int argc, char **argv) {
         } else goto usage;
     }
     if (probe && listen) goto usage;
-    if (rx_aggregation && listen) goto usage;
     if (match && !fixed) goto usage; /* matching moves the one fixed channel */
     awdl_data_tx_rate = (struct ieee80211_tx_rate){ .legacy = data_rate, .mcs = -1, .sgi = 0 };
     char *end;
@@ -141,17 +141,10 @@ int main(int argc, char **argv) {
     struct awdl_sched s;
     awdl_sched_init(&s, hostname, &self, chan, &pipe_radio_backend, &r, tap_name ? deliver : NULL, &net);
     s.service_port = service_port;
-    /* The installed 0.2.5 desktop cannot pass --rx-aggregation; a marker file
-     * beside this executable turns the experiment on for that build. */
-    {
-        char marker[MAX_PATH];
-        DWORD n = GetModuleFileNameA(NULL, marker, sizeof marker);
-        char *slash = n && n < sizeof marker ? strrchr(marker, '\\') : NULL;
-        if (slash && (size_t) (slash - marker) + sizeof "\\rx-aggregation.enable" <= sizeof marker) {
-            strcpy(slash, "\\rx-aggregation.enable");
-            if (GetFileAttributesA(marker) != INVALID_FILE_ATTRIBUTES && !listen) rx_aggregation = 1;
-        }
-    }
+    /* Accept the phone's Block Ack agreements and reorder its A-MPDU retransmissions
+     * before TCP sees them; every measured 80 MB receive since 2026-10-20 ran with it.
+     * Listen-only mode never answers ADDBA, so it has no agreement to honour. */
+    rx_aggregation = rx_aggregation && !listen;
     s.rx_aggregation = rx_aggregation;
     s.listen_only = listen;
     s.vht80 = r.wide80 && !listen; /* only advertise what the radio is actually tuned to */
@@ -309,6 +302,6 @@ int main(int argc, char **argv) {
     awdl_netif_close(net.nif);
     return failed;
 usage:
-    fprintf(stderr, "usage: awdl_link <pipe> <6|36|44|149> <seconds 1..3600> [--probe|--listen] [--fixed [--match-channel]] [--data-rate 12|18|24|36|48|54 (default 54)] [--rx-aggregation] [--no-ack-merge] [--tap NAME] [--service-port PORT] [--stop-file PATH]\n");
+    fprintf(stderr, "usage: awdl_link <pipe> <6|36|44|149> <seconds 1..3600> [--probe|--listen] [--fixed [--match-channel]] [--data-rate 12|18|24|36|48|54 (default 54)] [--no-rx-aggregation] [--no-ack-merge] [--tap NAME] [--service-port PORT] [--stop-file PATH]\n");
     return 2;
 }
