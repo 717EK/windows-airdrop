@@ -529,6 +529,14 @@ static void clean_peers(struct awdl_sched *s, uint64_t now) {
 	uint64_t cutoff = now > awdl->peers.timeout ? now - awdl->peers.timeout : 0;
 	awdl_peers_remove(awdl->peers.peers, cutoff,
 	                  awdl->peer_remove_cb, awdl->peer_remove_cb_data);
+	/* A sender that leaves without DELBA must not hold the single reorder session
+	 * (and keep declining every later sender) for the rest of the process. */
+	struct awdl_peer *ba_owner;
+	if (s->ba.active && awdl_peer_get(awdl->peers.peers, &s->ba_peer, &ba_owner) < 0) {
+		ba_reorder_stop(&s->ba, ba_release, s);
+		printf("Block Ack session with %s ended: peer expired\n", ether_ntoa(&s->ba_peer));
+		fflush(stdout);
+	}
 	awdl_election_run(&awdl->election, &awdl->peers);
 	awdl_adopt_chanseq(s);
 	s->due_peers = now + awdl->peers.clean_interval;

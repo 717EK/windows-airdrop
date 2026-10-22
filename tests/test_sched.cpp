@@ -471,6 +471,30 @@ TEST_F(Sim, active_block_ack_session_declines_other_peers_and_keeps_window_on_re
     EXPECT_EQ(a.s.ba.head, 20);
 }
 
+TEST_F(Sim, block_ack_session_ends_when_its_peer_expires) {
+    auto &a = add(); auto &b = add();
+    a.s.rx_aggregation = true;
+    // a learns b, then accepts b's ADDBA
+    EXPECT_EQ(awdl_sched_probe(&b.s, &a.addr), 0);
+    const auto &probe = b.radio.sent.back();
+    ASSERT_EQ(awdl_sched_radio_rx(&a.s, probe.data(), probe.size()), RX_OK);
+    ASSERT_TRUE(a.knows(b));
+    unsigned params = 2 | (64 << 6);
+    std::vector<uint8_t> f = {0, 0, 8, 0, 0, 0, 0, 0, 0xd0, 0, 0, 0};
+    f.insert(f.end(), (uint8_t *) &a.addr, (uint8_t *) &a.addr + 6);
+    f.insert(f.end(), (uint8_t *) &b.addr, (uint8_t *) &b.addr + 6);
+    f.insert(f.end(), {0, 0x25, 0, 0xff, 0x94, 0x73, 0, 0, 3, 0, 1, (uint8_t) params, (uint8_t) (params >> 8), 0, 0, 0x10, 0});
+    ASSERT_EQ(awdl_sched_radio_rx(&a.s, f.data(), f.size()), RX_OK);
+    ASSERT_TRUE(a.s.ba.active);
+    a.s.due_peers = 0; // peer cleanup due now, b still known: session stays
+    awdl_sched_tick(&a.s);
+    EXPECT_TRUE(a.s.ba.active);
+    awdl_peer_remove(a.s.awdl_state.peers.peers, &b.addr, NULL, NULL);
+    a.s.due_peers = 0;
+    awdl_sched_tick(&a.s);
+    EXPECT_FALSE(a.s.ba.active);
+}
+
 TEST_F(Sim, accepted_block_ack_session_reorders_data_and_honours_bar_and_delba) {
     auto &a = add(); auto &b = add();
     a.s.rx_aggregation = true;
