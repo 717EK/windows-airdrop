@@ -24,7 +24,7 @@ sealed class MainForm : Form
     readonly ActivityWindow activityWindow;
     readonly ContextMenuStrip menu = new() { Renderer = new ToolStripProfessionalRenderer(new DarkMenuColors()) };
     readonly ToolStripMenuItem recoverItem = new("Bluetooth recovery…"), stopItem = new("Stop receiving");
-    readonly ToolStripMenuItem fasterItem = new("Faster sending (experimental)") { CheckOnClick = true };
+    readonly ToolStripMenuItem fasterItem = new("Compatible sending (12 Mbit/s)") { CheckOnClick = true };
     readonly ToolStripMenuItem matchItem = new("Match iPhone's Wi-Fi channel") { CheckOnClick = true };
     static readonly TimeSpan LostGrace = TimeSpan.FromSeconds(60);
     readonly List<DeviceRow> rows = [];
@@ -111,12 +111,12 @@ sealed class MainForm : Form
 
         try { session = new Session(); }
         catch (Exception e) { throw new IOException("PulseDrop setup is incomplete. Run tools/package-desktop.ps1 first.", e); }
-        fasterItem.Checked = session.FasterSending;
+        fasterItem.Checked = session.CompatibleSending;
         fasterItem.Click += (_, _) => {
             try {
-                session.SetFasterSending(fasterItem.Checked);
-                sendHint.Text = fasterItem.Checked ? "Faster sending enabled. Switch off if transfers become unreliable." : "Compatible sending speed enabled.";
-            } catch (Exception e) { fasterItem.Checked = session.FasterSending; MessageBox.Show(this, e.Message, "PulseDrop"); }
+                session.SetCompatibleSending(fasterItem.Checked);
+                sendHint.Text = fasterItem.Checked ? "Compatible sending (12 Mbit/s) enabled. Transfers are slower." : "Standard sending speed (54 Mbit/s) enabled.";
+            } catch (Exception e) { fasterItem.Checked = session.CompatibleSending; MessageBox.Show(this, e.Message, "PulseDrop"); }
         };
         matchItem.Checked = session.MatchChannel;
         matchItem.Click += (_, _) => {
@@ -312,7 +312,7 @@ sealed class MainForm : Form
     void UpdateControls()
     {
         bool running = session.Running, working = session.Working;
-        adapter.Text = $"T3U · {(session.MatchChannel ? "Auto" : "149")} · {(session.FasterSending ? 24 : 12)} Mbit/s PHY";
+        adapter.Text = $"T3U · {(session.MatchChannel ? "Auto" : "149")} · {(session.CompatibleSending ? 12 : 54)} Mbit/s PHY";
         fasterItem.Enabled = matchItem.Enabled = !running && !working && !busy;
         if (running && !wasRunning) endsAt = DateTime.Now.AddHours(1);
         wasRunning = running;

@@ -46,7 +46,7 @@
 3. Choose a file, select the iPhone and press **Send**.
 4. **Accept** on the iPhone and wait for completion.
 
-Keep the phone nearby and unlocked. The app limit is **1 GiB** per transfer; large videos may take several minutes. Keep experimental faster sending and channel matching off for the baseline setup.
+Keep the phone nearby and unlocked. The app limit is **1 GiB** per transfer; large videos may take several minutes. Keep channel matching off for the baseline setup. Turn on **Compatible sending (12 Mbit/s)** in the gear menu only if transfers become unreliable.
 
 ## Inside the app
 

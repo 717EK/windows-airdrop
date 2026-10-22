@@ -72,7 +72,10 @@ static void peer_removed(struct awdl_peer *peer, void *ctx) {
 int main(int argc, char **argv) {
     int probe = 0, listen = 0, fixed = 0, match = 0, rx_aggregation = 0;
     unsigned service_port = 0;
-    unsigned data_rate = 12;
+    /* Unicast data rate. While receiving, almost every unicast is a TCP ACK; at 12 Mbit/s
+     * they took most of the phone's on-channel airtime. 54 cut an 80 MB receive from
+     * ~27-35 s to ~20-25 s (2026-10-21, two runs); 12 stays as the compatible fallback. */
+    unsigned data_rate = 54;
     const char *stop_file = NULL;
     const char *tap_name = NULL;
     if (argc < 4) goto usage;
@@ -84,9 +87,10 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--rx-aggregation")) rx_aggregation = 1;
         else if (!strcmp(argv[i], "--data-rate") && i + 1 < argc) {
             const char *rate = argv[++i];
-            if (!strcmp(rate, "12")) data_rate = 12;
-            else if (!strcmp(rate, "24")) data_rate = 24;
-            else goto usage;
+            char *rend;
+            unsigned long v = strtoul(rate, &rend, 10);
+            if (*rend || !(v == 12 || v == 18 || v == 24 || v == 36 || v == 48 || v == 54)) goto usage;
+            data_rate = (unsigned) v;
         }
         else if (!strcmp(argv[i], "--stop-file") && i + 1 < argc) stop_file = argv[++i];
         else if (!strcmp(argv[i], "--tap") && i + 1 < argc) tap_name = argv[++i];
@@ -296,6 +300,6 @@ int main(int argc, char **argv) {
     awdl_netif_close(net.nif);
     return failed;
 usage:
-    fprintf(stderr, "usage: awdl_link <pipe> <6|36|44|149> <seconds 1..3600> [--probe|--listen] [--fixed [--match-channel]] [--data-rate 12|24] [--rx-aggregation] [--tap NAME] [--service-port PORT] [--stop-file PATH]\n");
+    fprintf(stderr, "usage: awdl_link <pipe> <6|36|44|149> <seconds 1..3600> [--probe|--listen] [--fixed [--match-channel]] [--data-rate 12|18|24|36|48|54 (default 54)] [--rx-aggregation] [--tap NAME] [--service-port PORT] [--stop-file PATH]\n");
     return 2;
 }
