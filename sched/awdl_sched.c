@@ -53,6 +53,18 @@ static int build_action(struct awdl_sched *s, uint8_t *buf, enum awdl_action_typ
         off += size;
     }
     if (type != AWDL_ACTION_MIF) return len;
+    if (s->vht80) {
+        /* AWDL TLV 0x11 carries a standard VHT Capabilities element, as native
+         * Apple peers send it (bf 0c ...). Ours: max MPDU 3895, no 160 MHz, short
+         * GI for 80 MHz, max A-MPDU exponent 3 (64 KB); one spatial stream, MCS
+         * 0-9, both directions. Channel sequence entries already use operating
+         * class 128 (80 MHz) for channel 149. */
+        static const uint8_t vht[] = {0x11, 14, 0, 0xbf, 12, 0x20, 0x00, 0x80, 0x01,
+                                      0xfe, 0xff, 0x00, 0x00, 0xfe, 0xff, 0x00, 0x00};
+        if (len + (int) sizeof vht > 65535) return -1;
+        memcpy(buf + len, vht, sizeof vht);
+        len += sizeof vht;
+    }
     int n = awdl_service_records(buf + len, 65535 - len, s->awdl_state.self_address.ether_addr_octet,
                                  s->awdl_state.name, s->service_port);
     return n < 0 ? -1 : len + n;

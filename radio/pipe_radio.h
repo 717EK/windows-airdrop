@@ -13,6 +13,7 @@ struct pipe_radio {
     unsigned char *message;
     bool fixed_channel;
     bool ack_armed; /* register verification only, not proof of on-air ACKs */
+    bool wide80;    /* bridge reported an 80 MHz tune (HELLO reply bit 1) */
 };
 extern const struct RadioBackend pipe_radio_backend;
 #ifdef __cplusplus

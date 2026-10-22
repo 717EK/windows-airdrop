@@ -514,6 +514,24 @@ TEST_F(Sim, accepted_block_ack_session_reorders_data_and_honours_bar_and_delba) 
     EXPECT_FALSE(a.s.ba.active);
 }
 
+TEST_F(Sim, vht80_mif_carries_vht_capabilities_and_still_parses) {
+    auto &a = add(); auto &b = add();
+    strcpy(a.s.awdl_state.name, "001122334455");
+    a.s.service_port = 8771;
+    const uint8_t vht[] = {0x11, 14, 0, 0xbf, 12, 0x20, 0x00, 0x80, 0x01,
+                           0xfe, 0xff, 0x00, 0x00, 0xfe, 0xff, 0x00, 0x00};
+    EXPECT_EQ(awdl_sched_probe(&a.s, &b.addr), 0);
+    auto plain = a.radio.sent.back();
+    EXPECT_EQ(std::search(plain.begin(), plain.end(), vht, vht + sizeof vht), plain.end());
+    a.s.vht80 = true;
+    EXPECT_EQ(awdl_sched_probe(&a.s, &b.addr), 0);
+    const auto &frame = a.radio.sent.back();
+    EXPECT_EQ(frame.size(), plain.size() + sizeof vht);
+    EXPECT_NE(std::search(frame.begin(), frame.end(), vht, vht + sizeof vht), frame.end());
+    EXPECT_EQ(awdl_sched_radio_rx(&b.s, frame.data(), frame.size()), RX_OK);
+    EXPECT_TRUE(b.knows(a));
+}
+
 TEST_F(Sim, native_service_records_are_in_mif_and_survive_owl_parsing) {
     auto &a = add(); auto &b = add();
     strcpy(a.s.awdl_state.name, "001122334455");

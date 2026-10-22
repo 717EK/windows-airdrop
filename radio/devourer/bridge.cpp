@@ -2,6 +2,7 @@
 // Standalone radio service. Never link this executable to OWL.
 #include <windows.h>
 #include <libusb.h>
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <deque>
@@ -29,11 +30,12 @@ static const char *rate_name(unsigned code, char *buf, size_t len) {
 }
 
 int main(int argc, char **argv) {
-    bool trace = false, no_ack = false;
-    if (argc < 2 || argc > 4) { fprintf(stderr, "usage: devourer-bridge <local-pipe-name> [--no-ack] [--trace]\n"); return 2; }
+    bool trace = false, no_ack = false, width20 = false;
+    if (argc < 2 || argc > 5) { fprintf(stderr, "usage: devourer-bridge <local-pipe-name> [--no-ack] [--trace] [--width20]\n"); return 2; }
     for (int i = 2; i < argc; i++) {
         if (!strcmp(argv[i], "--trace")) trace = true;
         else if (!strcmp(argv[i], "--no-ack")) no_ack = true;
+        else if (!strcmp(argv[i], "--width20")) width20 = true;
         else return 2;
     }
     if (strncmp(argv[1], "\\\\.\\pipe\\", 9)) return 2;
@@ -73,6 +75,11 @@ int main(int argc, char **argv) {
                     unsigned bar = 0, retry = 0, amsdu = 0, seq_jumps = 0, last_seq = 0; bool have_seq = false;
                     unsigned long long rssi = 0; unsigned rates[0x54]{}; } rx_link;
     auto metrics_at = GetTickCount64() + 5000;
+    // Channel activity per 100 ms DIG window (CCA = channel-busy detections), from the
+    // DIG thread's cached snapshot; a new window is counted when the snapshot changes.
+    unsigned env_windows = 0, env_cca_max = 0, env_fa_max = 0;
+    unsigned long long env_cca_sum = 0, env_fa_sum = 0;
+    RxEnergy env_last{};
     unsigned long long tx_us = 0, max_tx_us = 0;
     bool ready = false;
     int exit_code = 0;
@@ -127,7 +134,18 @@ int main(int argc, char **argv) {
                     }
                 });
                 fprintf(stderr, "startup step=radio-init tick_ms=%llu\n", (unsigned long long)GetTickCount64());
-                session.device()->InitWrite(SelectedChannel{.Channel = (uint8_t)h.argument, .ChannelOffset = 0, .ChannelWidth = CHANNEL_WIDTH_20});
+                // 80 MHz with the AWDL channel as primary, as native Apple peers use it
+                // (channel sequence operating class 128). devourer ChannelOffset 1..4 is the
+                // lowest..highest 20 MHz slice; 20 MHz AWDL frames still go out on the primary.
+                // Needs devourer patches 02 (primary sub-channel code, MAC response slice/width)
+                // and 03 (RX digital filter per width). --width20 keeps the old 20 MHz tune.
+                unsigned ch = h.argument;
+                uint8_t primary = ch == 149 || ch == 36 ? 1 : ch == 44 ? 3 : 0;
+                bool wide = primary && !width20;
+                session.device()->InitWrite(SelectedChannel{.Channel = (uint8_t)ch,
+                    .ChannelOffset = (uint8_t)(wide ? primary : 0),
+                    .ChannelWidth = wide ? CHANNEL_WIDTH_80 : CHANNEL_WIDTH_20});
+                fprintf(stderr, "radio width=%d MHz primary_index=%u\n", wide ? 80 : 20, wide ? primary : 0);
                 fprintf(stderr, "startup step=radio-initialized tick_ms=%llu\n", (unsigned long long)GetTickCount64());
                 devourer::MacAddr mac;
                 memcpy(mac.bytes.data(), data, 6);
@@ -183,7 +201,7 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "RX warmup normal_frames=%u\n", normal_received.load());
                 fprintf(stderr, "startup step=ready tick_ms=%llu\n", (unsigned long long)GetTickCount64());
                 ready = true;
-                reply.argument = armed ? 1 : 0;
+                reply.argument = (armed ? 1u : 0u) | (wide ? 2u : 0u);
             } else if (ready && !rx_failed) {
                 if (h.command == RADIO_RX && !h.length) {
                     std::lock_guard<std::mutex> g(mu);
@@ -214,7 +232,23 @@ int main(int argc, char **argv) {
                     reply.argument = session.device()->GetSelectedChannel().Channel == h.argument ? 0 : UINT32_MAX;
                 } else if (h.command == RADIO_CLOSE && !h.length) break;
             }
+            if (ready) {
+                if (auto rtl_env = dynamic_cast<IRtlRadio *>(session.device())) {
+                    RxEnergy e = rtl_env->GetRxEnergy(false);
+                    if (e.valid_fa && (e.cca_ofdm != env_last.cca_ofdm || e.cca_cck != env_last.cca_cck ||
+                                       e.fa_ofdm != env_last.fa_ofdm || e.fa_cck != env_last.fa_cck)) {
+                        unsigned cca = e.cca_ofdm + e.cca_cck, fa = e.fa_ofdm + e.fa_cck;
+                        env_windows++; env_cca_sum += cca; env_fa_sum += fa;
+                        env_cca_max = std::max(env_cca_max, cca); env_fa_max = std::max(env_fa_max, fa);
+                        env_last = e;
+                    }
+                }
+            }
             if (ready && GetTickCount64() >= metrics_at) {
+                if (env_windows)
+                    fprintf(stderr, "rx env: windows=%u cca_avg=%llu cca_max=%u fa_avg=%llu fa_max=%u (per 100 ms)\n",
+                        env_windows, env_cca_sum / env_windows, env_cca_max, env_fa_sum / env_windows, env_fa_max);
+                env_windows = env_cca_max = env_fa_max = 0; env_cca_sum = env_fa_sum = 0;
                 unsigned long rx_count, lost; size_t depth; RxLink link;
                 { std::lock_guard<std::mutex> guard(mu); rx_count = received; lost = dropped; depth = queue.size(); link = rx_link; rx_link = RxLink{}; rx_link.last_seq = link.last_seq; rx_link.have_seq = link.have_seq; }
                 fprintf(stderr, "metrics tick_ms=%llu RX=%lu queue=%zu queue_dropped=%lu TX_submitted=%lu TX_failed=%lu unicast_ok=%u unicast_drop=%u retries=%llu tx_usb_us=%llu max_tx_usb_us=%llu\n",

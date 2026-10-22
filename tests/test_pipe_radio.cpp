@@ -42,13 +42,14 @@ public:
 TEST(pipe_radio, handshake_capture_transmit_channel_and_disconnect) {
     int tx = 0;
     PipeServer server([&](radio_message &h, std::vector<unsigned char> &data) {
-        if (h.command == RADIO_HELLO) { EXPECT_EQ(data.size(), 6u); EXPECT_EQ(h.argument, 6u); data.clear(); h.argument = 1; }
+        if (h.command == RADIO_HELLO) { EXPECT_EQ(data.size(), 6u); EXPECT_EQ(h.argument, 6u); data.clear(); h.argument = 1 | 2; }
         else if (h.command == RADIO_RX) { data = {0, 0, 8, 0, 0, 0, 0, 0, 0xd4, 0}; h.argument = 0; }
         else { if (h.command == RADIO_TX) tx++; data.clear(); h.argument = 0; }
     });
     auto r = server.client();
     ASSERT_EQ(pipe_radio_backend.open(&r), 0);
     EXPECT_TRUE(r.ack_armed);
+    EXPECT_TRUE(r.wide80);
     unsigned char frame[64]{};
     EXPECT_EQ(pipe_radio_backend.capture(&r, frame, sizeof frame), 10);
     EXPECT_EQ(frame[8], 0xd4);

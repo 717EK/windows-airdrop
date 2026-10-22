@@ -50,8 +50,10 @@ if [ ! -d "$DEPS/devourer/.git" ]; then
 	git -c core.autocrlf=false clone -q https://github.com/OpenIPC/devourer.git "$DEPS/devourer"
 fi
 git -C "$DEPS/devourer" checkout -q "$DEVOURER_COMMIT"
-git -C "$DEPS/devourer" apply --check "$REPO/patches/devourer-01-mingw-txdemo-fork.patch" 2>/dev/null &&
-	git -C "$DEPS/devourer" apply "$REPO/patches/devourer-01-mingw-txdemo-fork.patch"
+for p in "$REPO"/patches/devourer-0*.patch; do
+	git -C "$DEPS/devourer" apply --check "$p" 2>/dev/null &&
+		git -C "$DEPS/devourer" apply "$p"
+done
 
 # GNU ld resolves static archives in one pass and CMake puts libusb before
 # libdevourer.a, so also append it after everything else.

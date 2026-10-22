@@ -154,6 +154,7 @@ int main(int argc, char **argv) {
     }
     s.rx_aggregation = rx_aggregation;
     s.listen_only = listen;
+    s.vht80 = r.wide80 && !listen; /* only advertise what the radio is actually tuned to */
     /* While receiving, almost every unicast we send is a TCP ACK, about one per
      * received MPDU, and they take most of the phone's time on our channel.
      * Letting a queued ACK absorb one newer ACK cut ACKs ~45% and an 80 MB
@@ -189,8 +190,8 @@ int main(int argc, char **argv) {
     uint64_t last_loop = clock_time_us(), metrics_at = last_loop + 5000000;
     uint64_t loop_us = 0, max_loop_us = 0, tx_late_us = 0;
     unsigned loops = 0, queue_peak = 0;
-    printf("local MAC %02x:%02x:%02x:%02x:%02x:%02x; ACK armed=%d; on-air unverified\n",
-        r.mac[0], r.mac[1], r.mac[2], r.mac[3], r.mac[4], r.mac[5], r.ack_armed);
+    printf("local MAC %02x:%02x:%02x:%02x:%02x:%02x; ACK armed=%d; radio 80 MHz=%d; on-air unverified\n",
+        r.mac[0], r.mac[1], r.mac[2], r.mac[3], r.mac[4], r.mac[5], r.ack_armed, r.wide80);
     printf("service_port=%u channel=%u fixed=%d data_rate=%u match_channel=%d; TX reports require destination correlation in radio log\n", service_port, channel, fixed, data_rate, match);
     fflush(stdout);
     while (clock_time_us() < deadline && (!stop_file || GetFileAttributesA(stop_file) == INVALID_FILE_ATTRIBUTES)) {

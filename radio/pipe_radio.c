@@ -11,6 +11,7 @@ static void close_pipe(void *ctx) {
     r->io_event = NULL;
     free(r->message); r->message = NULL;
     r->ack_armed = false;
+    r->wide80 = false;
 }
 
 /* A dead bridge must not hang the scheduler. Cancel and reap before freeing the OVERLAPPED. */
@@ -68,6 +69,7 @@ static int open_pipe(void *ctx) {
     if (!SetNamedPipeHandleState(r->pipe, &mode, NULL, NULL)) { close_pipe(r); return -1; }
     int flags = request(r, RADIO_HELLO, r->channel, r->mac, 6, NULL, 0);
     r->ack_armed = flags >= 0 && (flags & 1);
+    r->wide80 = flags >= 0 && (flags & 2);
     if (flags < 0) close_pipe(r);
     return flags < 0 ? -1 : 0;
 }

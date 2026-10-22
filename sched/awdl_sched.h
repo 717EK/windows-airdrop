@@ -41,6 +41,7 @@ struct awdl_sched {
 	unsigned addba_answered; /* ADDBA Requests answered, including explicit declines */
 	bool rx_aggregation; /* experimental: enable only for traced throughput comparisons */
 	bool listen_only; /* awdl_link --listen: never transmit, not even ADDBA responses */
+	bool vht80; /* advertise VHT capabilities; set from the bridge's confirmed 80 MHz tune */
 	struct ba_reorder ba; /* receive reordering for the accepted Block Ack session */
 	struct ether_addr ba_peer;
 	unsigned ba_tid, bar_seen, delba_seen;
