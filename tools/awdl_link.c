@@ -70,7 +70,7 @@ static void peer_removed(struct awdl_peer *peer, void *ctx) {
 
 
 int main(int argc, char **argv) {
-    int probe = 0, listen = 0, fixed = 0, match = 0, rx_aggregation = 0;
+    int probe = 0, listen = 0, fixed = 0, match = 0, rx_aggregation = 0, ack_merge = 1;
     unsigned service_port = 0;
     /* Unicast data rate. While receiving, almost every unicast is a TCP ACK; at 12 Mbit/s
      * they took most of the phone's on-channel airtime. 54 cut an 80 MB receive from
@@ -85,6 +85,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--fixed")) fixed = 1;
         else if (!strcmp(argv[i], "--match-channel")) match = 1;
         else if (!strcmp(argv[i], "--rx-aggregation")) rx_aggregation = 1;
+        else if (!strcmp(argv[i], "--no-ack-merge")) ack_merge = 0;
         else if (!strcmp(argv[i], "--data-rate") && i + 1 < argc) {
             const char *rate = argv[++i];
             char *rend;
@@ -153,6 +154,13 @@ int main(int argc, char **argv) {
     }
     s.rx_aggregation = rx_aggregation;
     s.listen_only = listen;
+    /* While receiving, almost every unicast we send is a TCP ACK, about one per
+     * received MPDU, and they take most of the phone's time on our channel.
+     * Letting a queued ACK absorb one newer ACK cut ACKs ~45% and an 80 MB
+     * receive from ~20-25 s to ~14-18 s (2026-10-21); unbounded merging was
+     * slower, because the sender's TCP is clocked by ACKs. */
+    s.ack_merge = ack_merge && !listen;
+    s.ack_merge_limit = 1;
     printf("rx_aggregation=%d\n", rx_aggregation);
     s.awdl_state.election.metric_first = 1;
     if (fixed) s.awdl_state.channel.strategy = AWDL_CHANSEQ_INTERSECT;
@@ -263,10 +271,10 @@ int main(int argc, char **argv) {
         }
         if (s.unicast_count > queue_peak) queue_peak = s.unicast_count;
         if (clock_time_us() >= metrics_at) {
-            printf("metrics tick_ms=%llu loops=%u loop_us=%llu max_loop_us=%llu tx_due_late_us=%llu queue=%u queue_peak=%u tx_unicast=%u rx=%u\n",
+            printf("metrics tick_ms=%llu loops=%u loop_us=%llu max_loop_us=%llu tx_due_late_us=%llu queue=%u queue_peak=%u tx_unicast=%u rx=%u acks_merged=%u\n",
                 (unsigned long long)GetTickCount64(), loops, (unsigned long long)loop_us,
                 (unsigned long long)max_loop_us, (unsigned long long)tx_late_us,
-                s.unicast_count, queue_peak, s.awdl_state.stats.tx_data_unicast, received);
+                s.unicast_count, queue_peak, s.awdl_state.stats.tx_data_unicast, received, s.acks_merged);
             if (s.ba.active || s.bar_seen || s.delba_seen)
                 printf("ba active=%d in_order=%u reordered=%u duplicates=%u holes_skipped=%u held=%u bar=%u delba=%u\n",
                     s.ba.active, s.ba.in_order, s.ba.reordered, s.ba.duplicates, s.ba.holes_skipped,
@@ -300,6 +308,6 @@ int main(int argc, char **argv) {
     awdl_netif_close(net.nif);
     return failed;
 usage:
-    fprintf(stderr, "usage: awdl_link <pipe> <6|36|44|149> <seconds 1..3600> [--probe|--listen] [--fixed [--match-channel]] [--data-rate 12|18|24|36|48|54 (default 54)] [--rx-aggregation] [--tap NAME] [--service-port PORT] [--stop-file PATH]\n");
+    fprintf(stderr, "usage: awdl_link <pipe> <6|36|44|149> <seconds 1..3600> [--probe|--listen] [--fixed [--match-channel]] [--data-rate 12|18|24|36|48|54 (default 54)] [--rx-aggregation] [--no-ack-merge] [--tap NAME] [--service-port PORT] [--stop-file PATH]\n");
     return 2;
 }

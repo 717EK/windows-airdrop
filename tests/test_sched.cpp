@@ -845,3 +845,98 @@ TEST(BaReorder, a_late_earlier_frame_does_not_hide_an_expired_successor) {
     EXPECT_EQ(r.stored, 0u);
     ba_reorder_stop(&r, Released::cb, &out);
 }
+
+namespace {
+// Ethernet + IPv6 + TCP segment from the PC to a peer; options appended raw.
+std::vector<uint8_t> tcp6(uint16_t sport, uint32_t ack, uint8_t flags = 0x10,
+                          std::vector<uint8_t> options = {}, size_t payload = 0) {
+    size_t hl = 20 + options.size();
+    std::vector<uint8_t> f = {2, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 1, 0x86, 0xdd,
+                              0x60, 0, 0, 0, (uint8_t) ((hl + payload) >> 8), (uint8_t) (hl + payload), 6, 64};
+    for (int i = 0; i < 32; i++) f.push_back((uint8_t) (i < 16 ? 0xa0 + i : 0xb0 + i)); // src, dst
+    std::vector<uint8_t> t = {(uint8_t) (sport >> 8), (uint8_t) sport, 0x20, 0x43, 0, 0, 0, 1,
+                              (uint8_t) (ack >> 24), (uint8_t) (ack >> 16), (uint8_t) (ack >> 8), (uint8_t) ack,
+                              (uint8_t) ((hl / 4) << 4), flags, 0x10, 0, 0, 0, 0, 0};
+    t.insert(t.end(), options.begin(), options.end());
+    f.insert(f.end(), t.begin(), t.end());
+    f.insert(f.end(), payload, 0x55);
+    return f;
+}
+uint32_t queued_ack(const awdl_sched &s, unsigned i) {
+    const uint8_t *q = buf_data(s.unicast[i]) + 14 + 40;
+    return (uint32_t) q[8] << 24 | (uint32_t) q[9] << 16 | (uint32_t) q[10] << 8 | q[11];
+}
+const std::vector<uint8_t> kTimestamps = {1, 1, 8, 10, 0, 0, 0, 1, 0, 0, 0, 2};
+} // namespace
+
+TEST_F(Sim, newer_pure_tcp_ack_replaces_queued_one_of_same_flow) {
+    auto &a = add();
+    a.s.ack_merge = true;
+    auto first = tcp6(5000, 1000, 0x10, kTimestamps), second = tcp6(5000, 2000, 0x10, kTimestamps);
+    ASSERT_EQ(awdl_sched_host_tx(&a.s, first.data(), first.size()), 0);
+    ASSERT_EQ(awdl_sched_host_tx(&a.s, second.data(), second.size()), 0);
+    EXPECT_EQ(a.s.unicast_count, 1u);
+    EXPECT_EQ(queued_ack(a.s, 0), 2000u);
+    EXPECT_EQ(a.s.acks_merged, 1u);
+    auto stale = tcp6(5000, 1500, 0x10, kTimestamps); // older than queued: kept separately
+    ASSERT_EQ(awdl_sched_host_tx(&a.s, stale.data(), stale.size()), 0);
+    EXPECT_EQ(a.s.unicast_count, 2u);
+    auto other_port = tcp6(5001, 3000);
+    ASSERT_EQ(awdl_sched_host_tx(&a.s, other_port.data(), other_port.size()), 0);
+    EXPECT_EQ(a.s.unicast_count, 3u);
+    EXPECT_EQ(a.s.acks_merged, 1u);
+}
+
+TEST_F(Sim, only_pure_acks_merge_and_merging_is_opt_in) {
+    auto &a = add();
+    auto base = tcp6(6000, 1000);
+    ASSERT_EQ(awdl_sched_host_tx(&a.s, base.data(), base.size()), 0);
+    auto newer = tcp6(6000, 2000);
+    ASSERT_EQ(awdl_sched_host_tx(&a.s, newer.data(), newer.size()), 0);
+    EXPECT_EQ(a.s.unicast_count, 2u); // ack_merge off
+    a.s.ack_merge = true;
+    std::vector<std::vector<uint8_t>> not_pure = {
+        tcp6(6000, 3000, 0x18, {}, 100),                  // carries data
+        tcp6(6000, 4000, 0x11),                           // FIN
+        tcp6(6000, 5000, 0x10, {1, 1, 5, 10, 0, 0, 0, 1, 0, 0, 0, 2}), // SACK block
+    };
+    for (auto &f : not_pure) ASSERT_EQ(awdl_sched_host_tx(&a.s, f.data(), f.size()), 0);
+    EXPECT_EQ(a.s.unicast_count, 5u);
+    EXPECT_EQ(a.s.acks_merged, 0u);
+}
+
+TEST_F(Sim, mergeable_ack_is_accepted_even_when_the_queue_is_full) {
+    auto &a = add();
+    a.s.ack_merge = true;
+    auto ack = tcp6(7000, 1000);
+    ASSERT_EQ(awdl_sched_host_tx(&a.s, ack.data(), ack.size()), 0);
+    for (int i = 1; i < AWDL_UNICAST_QUEUE; i++) {
+        auto data = tcp6(7001, 0, 0x18, {}, 10);
+        ASSERT_EQ(awdl_sched_host_tx(&a.s, data.data(), data.size()), 0);
+    }
+    auto overflow = tcp6(7001, 0, 0x18, {}, 10);
+    EXPECT_EQ(awdl_sched_host_tx(&a.s, overflow.data(), overflow.size()), -1);
+    auto newer = tcp6(7000, 9000);
+    EXPECT_EQ(awdl_sched_host_tx(&a.s, newer.data(), newer.size()), 0);
+    EXPECT_EQ(queued_ack(a.s, 0), 9000u);
+}
+
+TEST_F(Sim, bounded_ack_merge_absorbs_at_most_limit_and_keeps_duplicates) {
+    auto &a = add();
+    a.s.ack_merge = true;
+    a.s.ack_merge_limit = 1;
+    for (uint32_t ack : {1000u, 2000u, 3000u, 4000u, 5000u}) {
+        auto f = tcp6(8000, ack);
+        ASSERT_EQ(awdl_sched_host_tx(&a.s, f.data(), f.size()), 0);
+    }
+    // 1000<-2000, 3000<-4000, 5000: five ACKs leave as three, newest content kept
+    ASSERT_EQ(a.s.unicast_count, 3u);
+    EXPECT_EQ(queued_ack(a.s, 0), 2000u);
+    EXPECT_EQ(queued_ack(a.s, 1), 4000u);
+    EXPECT_EQ(queued_ack(a.s, 2), 5000u);
+    EXPECT_EQ(a.s.acks_merged, 2u);
+    auto dup = tcp6(8000, 5000); // duplicate ACK: never merged
+    ASSERT_EQ(awdl_sched_host_tx(&a.s, dup.data(), dup.size()), 0);
+    EXPECT_EQ(a.s.unicast_count, 4u);
+    EXPECT_EQ(a.s.acks_merged, 2u);
+}

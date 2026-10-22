@@ -32,6 +32,12 @@ struct awdl_sched {
 	void *deliver_ctx;
 	struct buf *unicast[AWDL_UNICAST_QUEUE];
 	unsigned unicast_count;
+	/* A newer pure TCP ACK replaces a queued, unsent one of the same flow, at most
+	 * ack_merge_limit times per queued ACK (0 = unbounded); duplicates never merge.
+	 * awdl_link turns it on with limit 1, which at most halves the ACK count. */
+	bool ack_merge;
+	unsigned ack_merge_limit, acks_merged;
+	uint8_t unicast_merges[AWDL_UNICAST_QUEUE];
 	unsigned addba_answered; /* ADDBA Requests answered, including explicit declines */
 	bool rx_aggregation; /* experimental: enable only for traced throughput comparisons */
 	bool listen_only; /* awdl_link --listen: never transmit, not even ADDBA responses */

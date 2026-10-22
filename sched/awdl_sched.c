@@ -144,6 +144,8 @@ static void send_unicast(struct awdl_sched *s, uint64_t now) {
 		}
 		buf_free(frame);
 		memmove(s->unicast + i, s->unicast + i + 1, (s->unicast_count - i - 1) * sizeof(*s->unicast));
+		memmove(s->unicast_merges + i, s->unicast_merges + i + 1,
+		        (s->unicast_count - i - 1) * sizeof(*s->unicast_merges));
 		s->unicast_count--;
 		if (s->unicast_count) s->due_unicast = now;
 		return; /* At most one packet per tick; do not flood the USB transmit queue. */
@@ -718,10 +720,68 @@ static int process_frame(struct awdl_sched *s, const uint8_t *frame, int len) {
 	return result;
 }
 
+/* True for an IPv6 TCP segment carrying nothing but a cumulative ACK: flags
+ * exactly ACK, no payload, and options limited to NOP/EOL/timestamps (SACK or
+ * anything else means the segment says more than its ACK number). */
+static bool pure_tcp_ack(const uint8_t *eth, int len) {
+	if (len < ETHER_LENGTH + 40 + 20 || eth[12] != 0x86 || eth[13] != 0xdd)
+		return false;
+	const uint8_t *ip = eth + ETHER_LENGTH;
+	unsigned plen = (unsigned) ip[4] << 8 | ip[5];
+	if ((ip[0] >> 4) != 6 || ip[6] != 6 /* TCP, no extension headers */ ||
+	    ETHER_LENGTH + 40 + plen > (unsigned) len)
+		return false;
+	const uint8_t *tcp = ip + 40;
+	unsigned hl = (tcp[12] >> 4) * 4u;
+	if (hl < 20 || hl != plen || tcp[13] != 0x10)
+		return false;
+	for (unsigned o = 20; o < hl;) {
+		if (tcp[o] == 0) break;
+		if (tcp[o] == 1) { o++; continue; }
+		if (o + 1 >= hl || tcp[o] != 8 || tcp[o + 1] != 10 || o + 10 > hl)
+			return false;
+		o += 10;
+	}
+	return true;
+}
+
+/* Replace a queued, unsent pure ACK of the same TCP connection with this newer
+ * one, in place. A cumulative ACK supersedes every earlier one, and while the
+ * peer is off our channel the queue otherwise fills with ACKs that each wait
+ * tens of milliseconds (32 queued, 25-80 ms average wait measured
+ * 2026-10-21), throttling the sender's TCP window. Returns true if merged. */
+static bool merge_tcp_ack(struct awdl_sched *s, const uint8_t *eth, int len) {
+	if (!pure_tcp_ack(eth, len))
+		return false;
+	const uint8_t *ip = eth + ETHER_LENGTH, *tcp = ip + 40;
+	uint32_t ack = (uint32_t) tcp[8] << 24 | (uint32_t) tcp[9] << 16 | (uint32_t) tcp[10] << 8 | tcp[11];
+	for (unsigned i = s->unicast_count; i-- > 0;) {
+		const uint8_t *q = buf_data(s->unicast[i]);
+		int qlen = buf_len(s->unicast[i]);
+		if (qlen != len || memcmp(q, eth, 6) || !pure_tcp_ack(q, qlen))
+			continue;
+		const uint8_t *qip = q + ETHER_LENGTH, *qtcp = qip + 40;
+		if (memcmp(qip + 8, ip + 8, 32) || memcmp(qtcp, tcp, 4))
+			continue; /* different addresses or ports */
+		uint32_t qack = (uint32_t) qtcp[8] << 24 | (uint32_t) qtcp[9] << 16 | (uint32_t) qtcp[10] << 8 | qtcp[11];
+		if (ack == qack || (uint32_t) (ack - qack) >= 0x80000000u)
+			return false; /* duplicate (the sender counts these) or older: keep both, in order */
+		if (s->ack_merge_limit && s->unicast_merges[i] >= s->ack_merge_limit)
+			return false; /* this one has absorbed enough; queue the newer ACK behind it */
+		memcpy((uint8_t *) buf_data(s->unicast[i]), eth, len);
+		s->unicast_merges[i]++;
+		s->acks_merged++;
+		return true;
+	}
+	return false;
+}
+
 int awdl_sched_host_tx(struct awdl_sched *s, const uint8_t *eth, int len) {
 	if (len < ETHER_LENGTH || len > ETHER_MAX_LEN)
 		return -1;
 	bool multicast = eth[ETHER_DST_OFFSET] & 0x01;
+	if (!multicast && s->ack_merge && merge_tcp_ack(s, eth, len))
+		return 0;
 	if (multicast ? circular_buf_full(s->tx_queue_multicast) : s->unicast_count == AWDL_UNICAST_QUEUE)
 		return -1;
 
@@ -733,6 +793,7 @@ int awdl_sched_host_tx(struct awdl_sched *s, const uint8_t *eth, int len) {
 		if (s->due_multicast == AWDL_SCHED_IDLE)
 			s->due_multicast = now;
 	} else {
+		s->unicast_merges[s->unicast_count] = 0;
 		s->unicast[s->unicast_count++] = b;
 		s->due_unicast = now;
 	}
