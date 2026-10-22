@@ -781,3 +781,25 @@ TEST(BaReorder, window_slides_and_wraps_sequence_space) {
     EXPECT_EQ(out.seqs.back(), 9);
     EXPECT_FALSE(r.active);
 }
+
+TEST(BaReorder, sliding_the_window_releases_a_frame_left_at_the_new_head) {
+    ba_reorder r{}; Released out;
+    ba_reorder_start(&r, 0, 4);
+    feed(r, out, 3);
+    feed(r, out, 6); // slides head to 3, where 3 is held
+    EXPECT_EQ(out.seqs, (std::vector<int>{3}));
+    EXPECT_EQ(r.head, 4);
+    EXPECT_EQ(r.stored, 1u);
+    ba_reorder_stop(&r, Released::cb, &out);
+}
+
+TEST(BaReorder, a_late_earlier_frame_does_not_hide_an_expired_successor) {
+    ba_reorder r{}; Released out;
+    ba_reorder_start(&r, 0, 64);
+    feed(r, out, 2, 0);
+    feed(r, out, 1, 99000);
+    ba_reorder_timeout(&r, BA_REORDER_TIMEOUT_US, Released::cb, &out);
+    EXPECT_EQ(out.seqs, (std::vector<int>{1, 2}));
+    EXPECT_EQ(r.stored, 0u);
+    ba_reorder_stop(&r, Released::cb, &out);
+}
