@@ -1,5 +1,6 @@
 """Disk-backed DVZip/CPIO transfers with bounded memory and atomic publication."""
 import hashlib
+import io
 import os
 from pathlib import Path
 import shutil
@@ -126,6 +127,53 @@ def unpack(source, directory=None, approved=None, mark=None):
         if not skip:
             if mark and directory is not None: mark(directory / output)
             receipts.append({'received': output, 'bytes': size, 'sha256': digest.hexdigest()})
+
+def likely_complete(source):
+    """Cheap end-of-upload probe for a DVZip archive: the block headers tile the
+    file exactly and the last block decodes to a CPIO trailer followed only by
+    padding. It reads the headers and one block, not the whole archive, so the
+    receiver can probe after a short stall; receive() still validates everything.
+    A false result is not final: the caller keeps the slower full check as a
+    fallback. Raw gzip archives have no block structure and use complete()."""
+    if isinstance(source, (bytes, bytearray)):
+        source = io.BytesIO(source)
+    try:
+        source.seek(0, os.SEEK_END)
+        end = source.tell()
+        source.seek(0)
+        if end < 4:
+            return False
+        if source.read(2) == b'\x1f\x8b':
+            return complete(source)
+        position, starts = 0, []
+        while position < end:
+            source.seek(position)
+            header = source.read(4)
+            if len(header) != 4:
+                return False
+            value, = struct.unpack('>I', header)
+            size = value & 0x7fffffff
+            if not size or position + 4 + size > end:
+                return False
+            starts = (starts + [position])[-2:]
+            position += 4 + size
+        tail = b''
+        for start in starts:  # the trailer record may straddle the last two blocks
+            source.seek(start)
+            value, = struct.unpack('>I', source.read(4))
+            body = source.read(value & 0x7fffffff)
+            if not value & 0x80000000:
+                decoder = zlib.decompressobj(15)
+                body = decoder.decompress(body, MAX_ARCHIVE_BYTES)
+                if not decoder.eof or decoder.unused_data:
+                    return False
+            tail = tail[-4096:] + body
+        at = tail.rfind(b'TRAILER!!!\x00')
+        return at >= 0 and not any(tail[at + 11:])
+    except (OSError, ValueError, OverflowError, zlib.error):
+        return False
+    finally:
+        source.seek(0, os.SEEK_END)
 
 def complete(source, directory=None):
     try:

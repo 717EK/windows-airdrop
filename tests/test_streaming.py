@@ -98,4 +98,31 @@ class StreamingTests(unittest.TestCase):
                     service.serve(SimpleNamespace(address='fe80::123', sid='test'))
             self.assertEqual(data.read_bytes(), b'active transfer')
 
+    def test_likely_complete_accepts_only_a_whole_dvzip_archive(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'clip.bin'
+            path.write_bytes(os.urandom(300 * 1024) + b'PulseDrop text\n' * 20000)
+            with tempfile.TemporaryFile() as body:
+                streaming.prepare(path, body)
+                whole = body.seek(0, 2)
+                self.assertTrue(streaming.likely_complete(body))
+                self.assertEqual(body.tell(), whole)
+                # every proper block boundary and a mid-block cut are incomplete
+                body.seek(0); data = body.read()
+                position, cuts = 0, []
+                while position < len(data):
+                    size = struct.unpack('>I', data[position:position + 4])[0] & 0x7fffffff
+                    position += 4 + size
+                    cuts.append(position)
+                for cut in cuts[:-1] + [len(data) - 1, len(data) // 2]:
+                    self.assertFalse(streaming.likely_complete(io.BytesIO(data[:cut])), cut)
+                self.assertFalse(streaming.likely_complete(io.BytesIO(data + b'\0\0\0\1x')))
+        single = encode_dvzip([('a.txt', b'one block')])
+        self.assertTrue(streaming.likely_complete(single))
+        self.assertTrue(streaming.likely_complete(io.BytesIO(single)))
+        self.assertFalse(streaming.likely_complete(single[:-3]))
+        zipped = gzip.compress(encode_cpio([('g.txt', b'gzip')]))
+        self.assertTrue(streaming.likely_complete(io.BytesIO(zipped)))
+        self.assertFalse(streaming.likely_complete(io.BytesIO(zipped[:-4])))
+
 if __name__=='__main__': unittest.main()
