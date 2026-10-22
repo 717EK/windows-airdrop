@@ -301,6 +301,20 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(len(outputs), 1)
         self.assertEqual(outputs[0].read_bytes(), b'complete upload\n')
 
+    def test_stalled_final_chunk_is_answered_quickly(self):
+        self.assertEqual(self.post('/Ask', self.ask('quick.txt'))[0], 200)
+        body = encode_dvzip([('quick.txt', b'quick answer\n')])
+        self.connection.putrequest('POST', '/Upload')
+        self.connection.putheader('Transfer-Encoding', 'chunked')
+        self.connection.endheaders()
+        began = time.monotonic()
+        self.connection.send(f'{len(body):x}\r\n'.encode() + body + b'\r\n')
+        response = self.connection.getresponse()
+        elapsed = time.monotonic() - began
+        self.assertEqual(response.status, 200)
+        response.read()
+        self.assertLess(elapsed, 2.0)  # was the 3 s stall timeout before the quick probe
+
     def test_interrupted_upload_can_be_retried_without_publishing_partial_data(self):
         self.assertEqual(self.post('/Ask', self.ask('retry.txt'))[0], 200)
         before = set(self.dest.iterdir())

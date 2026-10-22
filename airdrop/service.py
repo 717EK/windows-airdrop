@@ -35,7 +35,11 @@ ASK_COOLDOWN = 10         # seconds before a declined peer may ask again
 MEDIA_CAPABILITIES = Path(__file__).with_name('media_capabilities.json').read_bytes()
 
 
-def read_body(handler, limit, complete=None, progress=None, target=None):
+QUICK_STALL_SECONDS = 0.25  # probe this soon after the sender pauses at a chunk boundary
+FULL_STALL_SECONDS = 3      # the full completeness check, as before, once this quiet
+
+
+def read_body(handler, limit, complete=None, progress=None, target=None, quick=None):
     out = target if target is not None else io.BytesIO()
     received = 0
     began = time.perf_counter()
@@ -46,11 +50,11 @@ def read_body(handler, limit, complete=None, progress=None, target=None):
                 'elapsed_ms': round((time.perf_counter() - began) * 1000, 3)}), flush=True)
         out.flush()
         return out.getvalue() if target is None else None
-    def is_complete():
+    def is_complete(check=None):
         position = out.tell()
         try:
             out.flush(); out.seek(0)
-            return complete(out.getvalue() if target is None else out)
+            return (check or complete)(out.getvalue() if target is None else out)
         finally:
             out.seek(position)
     def copy(size):
@@ -71,10 +75,11 @@ def read_body(handler, limit, complete=None, progress=None, target=None):
     if te:
         if te[0].lower().strip() != 'chunked':
             raise ValueError('unsupported transfer encoding')
-        checked = -1  # archive length at the last completeness check
+        checked = -1        # archive length at the last full completeness check
+        quick_checked = -1  # archive length at the last quick probe
 
         def next_chunk():
-            nonlocal checked
+            nonlocal checked, quick_checked
             reader = handler.rfile
             raw = getattr(reader, 'raw', None)
             if complete is None or not hasattr(raw, '_timeout_occurred'):
@@ -82,7 +87,11 @@ def read_body(handler, limit, complete=None, progress=None, target=None):
             line = bytearray()
             previous_timeout = handler.connection.gettimeout()
             deadline = time.monotonic() + (previous_timeout or 120)
-            handler.connection.settimeout(3)
+            quiet_since = time.monotonic()
+            # iOS often never sends the final zero-length chunk: it stops after the
+            # archive and waits for our answer. A short quiet period plus a cheap
+            # probe answers it in ~0.25 s instead of 3 s.
+            handler.connection.settimeout(QUICK_STALL_SECONDS if quick else FULL_STALL_SECONDS)
             try:
                 while len(line) < 128:
                     try:
@@ -91,11 +100,23 @@ def read_body(handler, limit, complete=None, progress=None, target=None):
                         # CPython marks SocketIO unusable after a timeout; peek consumed nothing.
                         raw._timeout_occurred = False
                         # Re-check only after new data, so mid-transfer pauses don't use up the recovery.
-                        if not line and received and received != checked:
-                            checked = received
-                            if is_complete():
+                        if not line and received:
+                            done = None
+                            if quick and received != quick_checked:
+                                quick_checked = received
+                                # The probe filters; the full check proves it before we stop reading.
+                                if is_complete(quick):
+                                    checked = received
+                                    if is_complete():
+                                        done = 'quick probe, full check'
+                            if done is None and received != checked and \
+                                    time.monotonic() - quiet_since >= FULL_STALL_SECONDS - 0.01:
+                                checked = received
+                                if is_complete():
+                                    done = 'full check'
+                            if done:
                                 handler.close_connection = True
-                                print(f'Upload archive complete after {received} bytes; answering stalled final chunk', flush=True)
+                                print(f'Upload archive complete after {received} bytes ({done}); answering stalled final chunk', flush=True)
                                 return None
                         if time.monotonic() >= deadline:
                             raise
@@ -352,12 +373,13 @@ def make_server(address, port, destination, confirm=confirm_receive, receiver_na
                             last[0] = time.monotonic()
                             print(json.dumps({'event': 'progress', 'name': label, 'received': received, 'total': total}), flush=True)
                     progress(0, True)
-                    from streaming import complete, receive
+                    from streaming import complete, likely_complete, receive
                     approved = {safe_name(f['FileName']): f.get('FileSize', 0) for f in asked_files}
                     if len(approved) != len(asked_files):
                         raise ValueError('duplicate approved file names')
                     with tempfile.TemporaryFile(dir=destination) as raw:
-                        read_body(self, MAX_ARCHIVE_BYTES, lambda body: complete(body, destination), progress, target=raw)
+                        read_body(self, MAX_ARCHIVE_BYTES, lambda body: complete(body, destination), progress, target=raw,
+                                  quick=likely_complete)
                         try:
                             final_dir, receipts = receive(raw, destination, approved, mark_of_the_web)
                         except OSError as error:

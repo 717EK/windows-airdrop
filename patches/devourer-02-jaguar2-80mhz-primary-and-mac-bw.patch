@@ -1,0 +1,57 @@
+diff --git a/src/jaguar2/HalJaguar2.cpp b/src/jaguar2/HalJaguar2.cpp
+index 3bfefdc..913394a 100644
+--- a/src/jaguar2/HalJaguar2.cpp
++++ b/src/jaguar2/HalJaguar2.cpp
+@@ -979,9 +979,22 @@ void HalJaguar2::set_channel_bw(uint8_t channel, uint8_t bw, uint8_t rfe_type,
+ 
+   /* --- config_phydm_switch_bandwidth_8822b (20/40/80 + 5/10 MHz) --- */
+   uint32_t v8ac = _device.rtw_read32(0x08ac);
+-  const uint8_t sub = static_cast<uint8_t>((primary_ch_idx & 0xf) << 2);
++  /* 0x8ac[5:2], REG_CCKSB and REG_DATA_SC take the vendor sub-channel code
++   * (rtw88 RTW_SC_*: 1 upper, 2 lower, 3 upmost, 4 lowest), not devourer's
++   * position index (40: 1 lower / 2 upper; 80: 1..4 lowest..highest).
++   * Writing the index verbatim put the 80 MHz primary of channel 149 on 157
++   * (code 1 = upper), so the BB's primary CCA and the MAC's responses sat on
++   * the wrong 20 MHz slice. fast_retune's fw path already converts for 40. */
++  uint8_t sc = 0;
++  if (bw == 1)
++    sc = primary_ch_idx == 2 ? 1 /*upper*/ : 2 /*lower*/;
++  else if (bw == 2) {
++    static const uint8_t sc80[5] = {0, 4 /*lowest*/, 2 /*lower*/, 1 /*upper*/, 3 /*upmost*/};
++    sc = sc80[primary_ch_idx <= 4 ? primary_ch_idx : 0];
++  }
++  const uint8_t sub = static_cast<uint8_t>((sc & 0xf) << 2);
+   if (bw == 1) { /* 40 MHz */
+-    _device.phy_set_bb_reg(0x0a00, 1u << 4, primary_ch_idx == 1 ? 1 : 0);
++    _device.phy_set_bb_reg(0x0a00, 1u << 4, sc == 1 ? 1 : 0);
+     v8ac &= 0xFF3FF300;
+     v8ac |= (sub | 0x1u); /* CHANNEL_WIDTH_40 = 1 */
+     _device.phy_set_bb_reg(0x08ac, 0xffffffff, v8ac);
+@@ -1062,6 +1075,27 @@ void HalJaguar2::set_channel_bw(uint8_t channel, uint8_t bw, uint8_t rfe_type,
+     rf18 |= (1u << 11) | (1u << 10); /* RF BW 20M */
+   }
+ 
++  /* MAC half of the bandwidth (rtw88 rtw_set_channel_mac / halmac cfg_bw +
++   * cfg_pri_ch_idx). Hardware-generated responses (ACK, BlockAck) take their
++   * 20/40 MHz slice from REG_DATA_SC and the operating width from
++   * REG_WMAC_TRXPTCL_CTL[8:7]; injected frames carry their own per-descriptor
++   * DATA_SC and never needed this. Left at power-on defaults, an 80 MHz
++   * responder answered on the wrong slice and the peer retried. */
++  {
++    uint8_t txsc40 = 0;
++    if (bw == 2)
++      txsc40 = (sc == 1 || sc == 3) ? 9 /*40 upper*/ : 10 /*40 lower*/;
++    _device.rtw_write8(0x0483 /*REG_DATA_SC*/,
++                       static_cast<uint8_t>((sc & 0xf) | ((txsc40 & 0xf) << 4)));
++    uint32_t trx = _device.rtw_read32(0x0668 /*REG_WMAC_TRXPTCL_CTL*/);
++    trx &= ~((1u << 7) | (1u << 8)); /* BIT_RFMOD */
++    if (bw == 2)
++      trx |= 1u << 8; /* RFMOD 80M */
++    else if (bw == 1)
++      trx |= 1u << 7; /* RFMOD 40M */
++    _device.rtw_write32(0x0668, trx);
++  }
++
+   /* RF18 final value. The vendor (config_phydm_switch_channel_8822b) preserves
+    * bits 8-16 from the read and never masks — its RF18 comes out clean on 2.4G
+    * (0x0c09) and with the 5G band bits (8+16) set on 5G (0x10d24). devourer's

@@ -1,6 +1,7 @@
 /* Port of OWL's daemon/core.c scheduling (jedbillyb/owl 832d70f + omdrop-owl
  * patches) from libev timers to due times. Same decisions, same guards.
  * GPL-3.0-or-later, as the code it derives from. */
+#include <stdio.h>
 #include <string.h>
 
 #include "awdl_sched.h"
@@ -24,6 +25,8 @@
 static uint64_t after(uint64_t now, double sec) {
 	return now + sec_to_usec(sec);
 }
+
+static void ba_release(void *ctx, const uint8_t *frame, int len);
 
 static void radio_send(struct awdl_sched *s, const uint8_t *buf, int len) {
 	if (s->radio->transmit(s->radio_ctx, buf, (unsigned int) len) < 0)
@@ -50,6 +53,18 @@ static int build_action(struct awdl_sched *s, uint8_t *buf, enum awdl_action_typ
         off += size;
     }
     if (type != AWDL_ACTION_MIF) return len;
+    if (s->vht80) {
+        /* AWDL TLV 0x11 carries a standard VHT Capabilities element, as native
+         * Apple peers send it (bf 0c ...). Ours: max MPDU 3895, no 160 MHz, short
+         * GI for 80 MHz, max A-MPDU exponent 3 (64 KB); one spatial stream, MCS
+         * 0-9, both directions. Channel sequence entries already use operating
+         * class 128 (80 MHz) for channel 149. */
+        static const uint8_t vht[] = {0x11, 14, 0, 0xbf, 12, 0x20, 0x00, 0x80, 0x01,
+                                      0xfe, 0xff, 0x00, 0x00, 0xfe, 0xff, 0x00, 0x00};
+        if (len + (int) sizeof vht > 65535) return -1;
+        memcpy(buf + len, vht, sizeof vht);
+        len += sizeof vht;
+    }
     int n = awdl_service_records(buf + len, 65535 - len, s->awdl_state.self_address.ether_addr_octet,
                                  s->awdl_state.name, s->service_port);
     return n < 0 ? -1 : len + n;
@@ -141,6 +156,8 @@ static void send_unicast(struct awdl_sched *s, uint64_t now) {
 		}
 		buf_free(frame);
 		memmove(s->unicast + i, s->unicast + i + 1, (s->unicast_count - i - 1) * sizeof(*s->unicast));
+		memmove(s->unicast_merges + i, s->unicast_merges + i + 1,
+		        (s->unicast_count - i - 1) * sizeof(*s->unicast_merges));
 		s->unicast_count--;
 		if (s->unicast_count) s->due_unicast = now;
 		return; /* At most one packet per tick; do not flood the USB transmit queue. */
@@ -428,25 +445,19 @@ static void awdl_adopt_chanseq(struct awdl_sched *state) {
 
 int awdl_sched_count_slots(struct awdl_sched *s, const unsigned *candidates, int n, int *slots) {
 	struct awdl_peer *p;
-	int peers = 0;
-	awdl_peers_it_t it = awdl_peers_it_new(s->awdl_state.peers.peers);
 
 	for (int c = 0; c < n; c++)
 		slots[c] = 0;
-	/* Slot counts are phase-invariant, so peers need not share our phase here. */
-	while (awdl_peers_it_next(it, &p) == PEERS_OK) {
-		if (!p->is_valid || !p->has_sequence)
-			continue;
-		peers++;
-		for (int i = 0; i < AWDL_CHANSEQ_LENGTH; i++) {
-			unsigned num = awdl_chan_num(p->sequence[i], p->sequence_enc);
-			for (int c = 0; c < n; c++)
-				if (num == candidates[c])
-					slots[c]++;
-		}
+	uint64_t now = clock_time_us();
+	if (!s->receive_peer_seen || now < s->receive_peer_seen || now - s->receive_peer_seen > 5000000 ||
+	    awdl_peer_get(s->awdl_state.peers.peers, &s->receive_peer, &p) != PEERS_OK ||
+	    !p->is_valid || !p->has_sequence) return 0;
+	for (int i = 0; i < AWDL_CHANSEQ_LENGTH; i++) {
+		unsigned num = awdl_chan_num(p->sequence[i], p->sequence_enc);
+		for (int c = 0; c < n; c++)
+			if (num == candidates[c]) slots[c]++;
 	}
-	awdl_peers_it_free(it);
-	return peers;
+	return 1;
 }
 
 unsigned awdl_chan_match_step(struct awdl_chan_match *m, const unsigned *candidates, const int *slots,
@@ -518,6 +529,14 @@ static void clean_peers(struct awdl_sched *s, uint64_t now) {
 	uint64_t cutoff = now > awdl->peers.timeout ? now - awdl->peers.timeout : 0;
 	awdl_peers_remove(awdl->peers.peers, cutoff,
 	                  awdl->peer_remove_cb, awdl->peer_remove_cb_data);
+	/* A sender that leaves without DELBA must not hold the single reorder session
+	 * (and keep declining every later sender) for the rest of the process. */
+	struct awdl_peer *ba_owner;
+	if (s->ba.active && awdl_peer_get(awdl->peers.peers, &s->ba_peer, &ba_owner) < 0) {
+		ba_reorder_stop(&s->ba, ba_release, s);
+		printf("Block Ack session with %s ended: peer expired\n", ether_ntoa(&s->ba_peer));
+		fflush(stdout);
+	}
 	awdl_election_run(&awdl->election, &awdl->peers);
 	awdl_adopt_chanseq(s);
 	s->due_peers = now + awdl->peers.clean_interval;
@@ -554,6 +573,8 @@ void awdl_sched_free(struct awdl_sched *s) {
 		buf_free(b);
 	circular_buf_free(s->tx_queue_multicast);
 	awdl_peers_free(s->awdl_state.peers.peers);
+	ba_reorder_start(&s->ba, 0, 0); /* frees held frames */
+	s->ba.active = 0;
 }
 
 #define DUE(t) ((t) != AWDL_SCHED_IDLE && (t) <= now)
@@ -561,6 +582,9 @@ void awdl_sched_free(struct awdl_sched *s) {
 
 uint64_t awdl_sched_tick(struct awdl_sched *s) {
 	uint64_t now = clock_time_us();
+
+	if (s->ba.active)
+		ba_reorder_timeout(&s->ba, now, ba_release, s);
 
 	/* Channel first, so frames sent in this tick go out on the slot's channel. */
 	if (DUE(s->due_chan))
@@ -582,7 +606,114 @@ uint64_t awdl_sched_tick(struct awdl_sched *s) {
 	           MIN(s->due_unicast, s->due_multicast));
 }
 
+/*
+ * Block Ack session setup (IEEE 802.11 category 3). Accepting ADDBA made the
+ * test phone aggregate, but did not improve file goodput. Decline by default;
+ * --rx-aggregation enables controlled experiments with the hardware responder.
+ * Returns 1 when an ADDBA Request addressed to us was answered, 0 otherwise.
+ */
+static int answer_addba(struct awdl_sched *s, const uint8_t *frame, int len) {
+	if (len < 4 || s->listen_only) return 0; /* a passive observer never transmits */
+	unsigned rt = frame[2] | frame[3] << 8;
+	if (rt < 8 || len < (int) rt + 24 + 9) return 0;
+    const uint8_t *hdr = frame + rt;
+	if (hdr[0] != 0xd0) return 0; /* management, action */
+	if (memcmp(hdr + 4, s->awdl_state.self_address.ether_addr_octet, 6)) return 0;
+	const uint8_t *body = hdr + 24;
+	if (body[0] != 3 || body[1] != 0) return 0; /* Block Ack, ADDBA Request */
+	uint8_t token = body[2];
+	unsigned params = body[3] | body[4] << 8;
+	unsigned tid = (params >> 2) & 0xf;
+	unsigned buffer = params >> 6;
+	if (!buffer || buffer > 64) buffer = 64;
+	struct ether_addr peer;
+	memcpy(&peer, hdr + 10, 6);
+
+	uint8_t out[128];
+	int n = ieee80211_init_radiotap_header(out);
+	n += ieee80211_init_awdl_action_hdr(out + n, &s->awdl_state.self_address, &peer, &s->ieee80211_state);
+	unsigned reply = (params & 1) | 2 /* immediate Block Ack */ | (tid << 2) | (buffer << 6);
+	/* Aggregation stalled physical transfers; decline until explicitly tested. */
+	int accepted = s->rx_aggregation && (params & 2);
+	/* One reorder session only: while it is active, decline another peer or
+	 * TID (status 37) rather than silently dropping the first agreement's
+	 * state while its sender still aggregates. A retransmitted request for the
+	 * current session (same peer, TID and dialog token) is answered again
+	 * without rewinding the window. */
+	bool same_session = s->ba.active && !memcmp(&peer, &s->ba_peer, sizeof peer) && tid == s->ba_tid;
+	if (accepted && s->ba.active && !same_session)
+		accepted = 0;
+	bool restart = accepted && !(same_session && token == s->ba_token);
+	uint8_t resp[9] = {3, 1, token, accepted ? 0 : 37, 0, (uint8_t) reply, (uint8_t) (reply >> 8), 0, 0};
+	memcpy(out + n, resp, sizeof resp);
+	n += sizeof resp;
+	radio_send(s, out, n);
+	s->addba_answered++;
+	if (restart) {
+		/* Starting Sequence Control follows the 2-byte timeout. */
+		uint16_t ssn = (uint16_t) ((body[7] | body[8] << 8) >> 4);
+		ba_reorder_stop(&s->ba, ba_release, s);
+		ba_reorder_start(&s->ba, ssn, buffer);
+		s->ba_peer = peer;
+		s->ba_tid = tid;
+		s->ba_token = token;
+	}
+	/* printf: the desktop captures the link's stdout, OWL's log_info does not reach it. */
+	printf("ADDBA request from %s tid %u buffer %u: %s with buffer %u\n", ether_ntoa(&peer), tid,
+	       params >> 6,
+	       accepted ? (restart ? "accepted" : "accepted again (retransmit, window kept)")
+	                : s->rx_aggregation ? "declined (another session active)" : "declined (experimental RX aggregation off)",
+	       buffer);
+	fflush(stdout);
+	return 1;
+}
+
+static int process_frame(struct awdl_sched *s, const uint8_t *frame, int len);
+
+static void ba_release(void *ctx, const uint8_t *frame, int len) {
+	process_frame((struct awdl_sched *) ctx, frame, len);
+}
+
+/* Frames of the accepted Block Ack session go through the reorder buffer;
+ * returns 1 when the frame was consumed here. */
+static int ba_session_rx(struct awdl_sched *s, const uint8_t *frame, int len) {
+	if (!s->ba.active || len < 4) return 0;
+	unsigned rt = frame[2] | frame[3] << 8;
+	if (rt < 8 || len < (int) rt + 20) return 0;
+	const uint8_t *hdr = frame + rt;
+	if (memcmp(hdr + 4, s->awdl_state.self_address.ether_addr_octet, 6) || memcmp(hdr + 10, &s->ba_peer, 6))
+		return 0;
+	if (hdr[0] == 0x84) { /* BlockAckReq: control (2) | TID in bits 12-15, then SSC */
+		if ((unsigned) (hdr[17] >> 4) != s->ba_tid) return 1;
+		s->bar_seen++;
+		ba_reorder_bar(&s->ba, (uint16_t) ((hdr[18] | hdr[19] << 8) >> 4), ba_release, s);
+		return 1;
+	}
+	if (hdr[0] == 0xd0 && len >= (int) rt + 30 && hdr[24] == 3 && hdr[25] == 2) { /* DELBA */
+		/* Parameter set: bit 11 initiator, bits 12-15 TID. Only our session's TID ends it. */
+		if ((unsigned) (hdr[27] >> 4) != s->ba_tid) return 1;
+		s->delba_seen++;
+		ba_reorder_stop(&s->ba, ba_release, s);
+		printf("DELBA from %s: Block Ack session ended\n", ether_ntoa(&s->ba_peer));
+		fflush(stdout);
+		return 1;
+	}
+	if (hdr[0] != 0x88 || len < (int) rt + 26 || (hdr[24] & 0x0f) != s->ba_tid)
+		return 0; /* not QoS data of this session */
+	uint16_t seq = (uint16_t) ((hdr[22] | hdr[23] << 8) >> 4);
+	ba_reorder_rx(&s->ba, seq, frame, len, clock_time_us(), ba_release, s);
+	return 1;
+}
+
 int awdl_sched_radio_rx(struct awdl_sched *s, const uint8_t *frame, int len) {
+	if (answer_addba(s, frame, len))
+		return RX_OK;
+	if (ba_session_rx(s, frame, len))
+		return RX_OK;
+	return process_frame(s, frame, len);
+}
+
+static int process_frame(struct awdl_sched *s, const uint8_t *frame, int len) {
 	struct buf *data_arr[MAX_NUM_AMPDU];
 	struct buf **data = &data_arr[0];
 	const struct buf *b = buf_new_const(frame, len);
@@ -590,6 +721,14 @@ int awdl_sched_radio_rx(struct awdl_sched *s, const uint8_t *frame, int len) {
 
 	/* A failed aggregate may already have produced partial outputs. */
 	for (struct buf **d = data_arr; d < data; d++) {
+		if (result == RX_OK && buf_len(*d) > 1024) {
+			const uint8_t *eth = buf_data(*d);
+			if (eth[12] == 0x86 && eth[13] == 0xdd &&
+			    !memcmp(eth, s->awdl_state.self_address.ether_addr_octet, 6)) {
+				memcpy(&s->receive_peer, eth + 6, 6);
+				s->receive_peer_seen = clock_time_us();
+			}
+		}
 		if (result == RX_OK && s->deliver)
 			s->deliver(s->deliver_ctx, buf_data(*d), buf_len(*d));
 		buf_free(*d);
@@ -601,10 +740,68 @@ int awdl_sched_radio_rx(struct awdl_sched *s, const uint8_t *frame, int len) {
 	return result;
 }
 
+/* True for an IPv6 TCP segment carrying nothing but a cumulative ACK: flags
+ * exactly ACK, no payload, and options limited to NOP/EOL/timestamps (SACK or
+ * anything else means the segment says more than its ACK number). */
+static bool pure_tcp_ack(const uint8_t *eth, int len) {
+	if (len < ETHER_LENGTH + 40 + 20 || eth[12] != 0x86 || eth[13] != 0xdd)
+		return false;
+	const uint8_t *ip = eth + ETHER_LENGTH;
+	unsigned plen = (unsigned) ip[4] << 8 | ip[5];
+	if ((ip[0] >> 4) != 6 || ip[6] != 6 /* TCP, no extension headers */ ||
+	    ETHER_LENGTH + 40 + plen > (unsigned) len)
+		return false;
+	const uint8_t *tcp = ip + 40;
+	unsigned hl = (tcp[12] >> 4) * 4u;
+	if (hl < 20 || hl != plen || tcp[13] != 0x10)
+		return false;
+	for (unsigned o = 20; o < hl;) {
+		if (tcp[o] == 0) break;
+		if (tcp[o] == 1) { o++; continue; }
+		if (o + 1 >= hl || tcp[o] != 8 || tcp[o + 1] != 10 || o + 10 > hl)
+			return false;
+		o += 10;
+	}
+	return true;
+}
+
+/* Replace a queued, unsent pure ACK of the same TCP connection with this newer
+ * one, in place. A cumulative ACK supersedes every earlier one, and while the
+ * peer is off our channel the queue otherwise fills with ACKs that each wait
+ * tens of milliseconds (32 queued, 25-80 ms average wait measured
+ * 2026-10-21), throttling the sender's TCP window. Returns true if merged. */
+static bool merge_tcp_ack(struct awdl_sched *s, const uint8_t *eth, int len) {
+	if (!pure_tcp_ack(eth, len))
+		return false;
+	const uint8_t *ip = eth + ETHER_LENGTH, *tcp = ip + 40;
+	uint32_t ack = (uint32_t) tcp[8] << 24 | (uint32_t) tcp[9] << 16 | (uint32_t) tcp[10] << 8 | tcp[11];
+	for (unsigned i = s->unicast_count; i-- > 0;) {
+		const uint8_t *q = buf_data(s->unicast[i]);
+		int qlen = buf_len(s->unicast[i]);
+		if (qlen != len || memcmp(q, eth, 6) || !pure_tcp_ack(q, qlen))
+			continue;
+		const uint8_t *qip = q + ETHER_LENGTH, *qtcp = qip + 40;
+		if (memcmp(qip + 8, ip + 8, 32) || memcmp(qtcp, tcp, 4))
+			continue; /* different addresses or ports */
+		uint32_t qack = (uint32_t) qtcp[8] << 24 | (uint32_t) qtcp[9] << 16 | (uint32_t) qtcp[10] << 8 | qtcp[11];
+		if (ack == qack || (uint32_t) (ack - qack) >= 0x80000000u)
+			return false; /* duplicate (the sender counts these) or older: keep both, in order */
+		if (s->ack_merge_limit && s->unicast_merges[i] >= s->ack_merge_limit)
+			return false; /* this one has absorbed enough; queue the newer ACK behind it */
+		memcpy((uint8_t *) buf_data(s->unicast[i]), eth, len);
+		s->unicast_merges[i]++;
+		s->acks_merged++;
+		return true;
+	}
+	return false;
+}
+
 int awdl_sched_host_tx(struct awdl_sched *s, const uint8_t *eth, int len) {
 	if (len < ETHER_LENGTH || len > ETHER_MAX_LEN)
 		return -1;
 	bool multicast = eth[ETHER_DST_OFFSET] & 0x01;
+	if (!multicast && s->ack_merge && merge_tcp_ack(s, eth, len))
+		return 0;
 	if (multicast ? circular_buf_full(s->tx_queue_multicast) : s->unicast_count == AWDL_UNICAST_QUEUE)
 		return -1;
 
@@ -616,6 +813,7 @@ int awdl_sched_host_tx(struct awdl_sched *s, const uint8_t *eth, int len) {
 		if (s->due_multicast == AWDL_SCHED_IDLE)
 			s->due_multicast = now;
 	} else {
+		s->unicast_merges[s->unicast_count] = 0;
 		s->unicast[s->unicast_count++] = b;
 		s->due_unicast = now;
 	}

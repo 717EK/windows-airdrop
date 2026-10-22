@@ -42,13 +42,14 @@ public:
 TEST(pipe_radio, handshake_capture_transmit_channel_and_disconnect) {
     int tx = 0;
     PipeServer server([&](radio_message &h, std::vector<unsigned char> &data) {
-        if (h.command == RADIO_HELLO) { EXPECT_EQ(data.size(), 6u); EXPECT_EQ(h.argument, 6u); data.clear(); h.argument = 1; }
+        if (h.command == RADIO_HELLO) { EXPECT_EQ(data.size(), 6u); EXPECT_EQ(h.argument, 6u); data.clear(); h.argument = 1 | 2; }
         else if (h.command == RADIO_RX) { data = {0, 0, 8, 0, 0, 0, 0, 0, 0xd4, 0}; h.argument = 0; }
         else { if (h.command == RADIO_TX) tx++; data.clear(); h.argument = 0; }
     });
     auto r = server.client();
     ASSERT_EQ(pipe_radio_backend.open(&r), 0);
     EXPECT_TRUE(r.ack_armed);
+    EXPECT_TRUE(r.wide80);
     unsigned char frame[64]{};
     EXPECT_EQ(pipe_radio_backend.capture(&r, frame, sizeof frame), 10);
     EXPECT_EQ(frame[8], 0xd4);
@@ -159,6 +160,7 @@ TEST(pipe_radio, DISABLED_request_round_trip_benchmark) {
 }
 
 #include "frame_filter.h"
+
 TEST(pipe_radio, filters_ambient_traffic_without_losing_awdl_or_local_acks) {
     unsigned char self[6] = {2, 1, 2, 3, 4, 5}, frame[64]{};
     EXPECT_FALSE(radio_frame_wanted(frame, 0, self));
@@ -175,4 +177,42 @@ TEST(pipe_radio, filters_ambient_traffic_without_losing_awdl_or_local_acks) {
     EXPECT_TRUE(radio_frame_wanted(frame, sizeof frame, self));
     frame[16] = 1;
     EXPECT_FALSE(radio_frame_wanted(frame, sizeof frame, self));
+}
+
+TEST(pipe_radio, delivers_local_awdl_addba_to_responder_but_rejects_ambient_requests) {
+    unsigned char self[6] = {2, 1, 2, 3, 4, 5}, frame[33]{};
+    frame[0] = 0xd0;
+    memcpy(frame + 4, self, 6);
+    memcpy(frame + 16, "\x00\x25\x00\xff\x94\x73", 6);
+    frame[24] = 3; // Block Ack category
+    frame[25] = 0; // ADDBA Request
+    EXPECT_TRUE(radio_frame_wanted(frame, sizeof frame, self));
+    EXPECT_FALSE(radio_frame_wanted(frame, sizeof frame - 1, self));
+    frame[4] ^= 2;
+    EXPECT_FALSE(radio_frame_wanted(frame, sizeof frame, self));
+    frame[4] ^= 2;
+    frame[16] ^= 1;
+    EXPECT_FALSE(radio_frame_wanted(frame, sizeof frame, self));
+    frame[16] ^= 1;
+    frame[24] = 4;
+    EXPECT_FALSE(radio_frame_wanted(frame, sizeof frame, self));
+}
+
+TEST(pipe_radio, truncated_block_ack_actions_are_rejected_without_reading_past_the_frame) {
+    unsigned char self[6] = {2, 1, 2, 3, 4, 5};
+    for (size_t n = 24; n < 30; n++) {
+        // Exact-size heap copy, so a read past n is out of bounds for sanitizer builds.
+        std::vector<unsigned char> f(n, 0);
+        f[0] = 0xd0;
+        memcpy(f.data() + 4, self, 6);
+        memcpy(f.data() + 16, "\x00\x25\x00\xff\x94\x73", 6);
+        EXPECT_FALSE(radio_frame_wanted(f.data(), f.size(), self)) << n;
+    }
+    std::vector<unsigned char> delba(30, 0);
+    delba[0] = 0xd0;
+    memcpy(delba.data() + 4, self, 6);
+    memcpy(delba.data() + 16, "\x00\x25\x00\xff\x94\x73", 6);
+    delba[24] = 3;
+    delba[25] = 2;
+    EXPECT_TRUE(radio_frame_wanted(delba.data(), delba.size(), self));
 }

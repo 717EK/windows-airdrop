@@ -1,5 +1,6 @@
 """Disk-backed DVZip/CPIO transfers with bounded memory and atomic publication."""
 import hashlib
+import io
 import os
 from pathlib import Path
 import shutil
@@ -126,6 +127,94 @@ def unpack(source, directory=None, approved=None, mark=None):
         if not skip:
             if mark and directory is not None: mark(directory / output)
             receipts.append({'received': output, 'bytes': size, 'sha256': digest.hexdigest()})
+
+TAIL_KEEP = 8192  # decoded bytes kept from the end of a block for the probe
+
+def _block_tail(source, start):
+    """Last TAIL_KEEP decoded bytes of the DVZip block at start, inflating in
+    BLOCK-sized steps so memory stays bounded whatever the block size."""
+    source.seek(start)
+    value, = struct.unpack('>I', exact(source, 4))
+    left = value & 0x7fffffff
+    if value & 0x80000000:
+        skip = max(0, left - TAIL_KEEP)
+        source.seek(start + 4 + skip)
+        return exact(source, left - skip)
+    decoder = zlib.decompressobj(15)
+    tail = b''
+    decoded = 0
+    def keep(chunk):
+        nonlocal tail, decoded
+        decoded += len(chunk)
+        if decoded > MAX_ARCHIVE_BYTES:  # same bound decode() enforces: stop a bomb early
+            raise ValueError('archive exceeds size limit')
+        tail = (tail + chunk)[-TAIL_KEEP:]
+    while left:
+        data = exact(source, min(BLOCK, left))
+        left -= len(data)
+        while data:
+            keep(decoder.decompress(data, BLOCK))
+            data = decoder.unconsumed_tail
+    keep(decoder.flush())
+    if not decoder.eof or decoder.unused_data:
+        raise ValueError('incomplete compressed block')
+    return tail
+
+def _ends_with_trailer_record(tail):
+    """True when tail ends with a CPIO trailer record (odc or newc header for a
+    zero-size entry named TRAILER!!!) followed only by zero padding. File data
+    that merely contains the name does not carry a matching header."""
+    at = tail.rfind(b'TRAILER!!!\x00')
+    if at < 0 or any(tail[at + 11:]):
+        return False
+    odc = tail[at - 76:at] if at >= 76 else b''
+    if odc[:6] == b'070707' and odc[59:65] == b'000013' and odc[65:76] == b'0' * 11:
+        return True
+    newc = tail[at - 110:at] if at >= 110 else b''
+    if newc[:6] == b'070701':
+        try:
+            return int(newc[94:102], 16) == 11 and int(newc[54:62], 16) == 0
+        except ValueError:
+            return False
+    return False
+
+def likely_complete(source):
+    """Cheap end-of-upload probe for a DVZip archive: the block headers tile the
+    file exactly and the archive ends with a CPIO trailer record. It reads the
+    block headers and the ends of the last two blocks, with bounded memory, so
+    the receiver can probe after a short stall. It is a filter, not proof: the
+    caller confirms with complete() before ending the upload. Raw gzip archives
+    have no block structure and use complete()."""
+    if isinstance(source, (bytes, bytearray)):
+        source = io.BytesIO(source)
+    try:
+        source.seek(0, os.SEEK_END)
+        end = source.tell()
+        source.seek(0)
+        if end < 4:
+            return False
+        if source.read(2) == b'\x1f\x8b':
+            return complete(source)
+        position, starts = 0, []
+        while position < end:
+            source.seek(position)
+            header = source.read(4)
+            if len(header) != 4:
+                return False
+            value, = struct.unpack('>I', header)
+            size = value & 0x7fffffff
+            if not size or position + 4 + size > end:
+                return False
+            starts = (starts + [position])[-2:]
+            position += 4 + size
+        tail = b''
+        for start in starts:  # the trailer record may straddle the last two blocks
+            tail = (tail + _block_tail(source, start))[-TAIL_KEEP:]
+        return _ends_with_trailer_record(tail)
+    except (OSError, ValueError, OverflowError, zlib.error):
+        return False
+    finally:
+        source.seek(0, os.SEEK_END)
 
 def complete(source, directory=None):
     try:

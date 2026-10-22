@@ -1,0 +1,43 @@
+--- a/src/jaguar2/HalJaguar2.cpp
++++ b/src/jaguar2/HalJaguar2.cpp
+@@ -1,4 +1,5 @@
+ #include "HalJaguar2.h"
++#include "RxDfir8822b.h"
+ 
+ #include <chrono>
+ #include <cstdlib>
+@@ -1131,14 +1132,8 @@
+   rf_set(0, 0xb8, (1u << 19), 0);
+   rf_set(0, 0xb8, (1u << 19), 1);
+ 
+-  /* --- phydm_rxdfirpar_by_bw_8822b (RX digital filter, BW20 path) ---
+-   * The RX DFIR must match the bandwidth or the OFDM demod filter is wrong:
+-   * energy is detected (CCA/FA fire) but no PSDU ever completes and nothing
+-   * reaches the MAC RX FIFO. This was the missing piece for first RX. */
+-  _device.phy_set_bb_reg(0x0948, (1u << 29) | (1u << 28), 0x2);
+-  _device.phy_set_bb_reg(0x094c, (1u << 29) | (1u << 28), 0x2);
+-  _device.phy_set_bb_reg(0x0c20, (1u << 31), 0x1);
+-  _device.phy_set_bb_reg(0x0e20, (1u << 31), 0x1);
++  /* Wide-channel demodulation needs its own RX filter, not the 20 MHz values. */
++  set_rx_dfir_8822b(_device, bw);
+ 
+   /* --- phydm_ccapar_by_rfe_8822b (CCA thresholds) --- col: 2G/5G x 1R/2R.
+    * RFE types 3/5/12/15/16/17/19 (external-FEM boards, incl. the T3U's
+--- /dev/null
++++ b/src/jaguar2/RxDfir8822b.h
+@@ -0,0 +1,15 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#pragma once
++#include <cstdint>
++
++namespace jaguar2 {
++// Vendor phydm_rxdfirpar_by_bw_8822b: narrowband shares the 20 MHz filter.
++template <typename Device>
++void set_rx_dfir_8822b(Device &device, uint8_t bw) {
++  const bool wide = bw == 1 || bw == 2; // CHANNEL_WIDTH_40 / _80
++  device.phy_set_bb_reg(0x0948, (1u << 29) | (1u << 28), bw == 1 ? 1 : 2);
++  device.phy_set_bb_reg(0x094c, (1u << 29) | (1u << 28), bw == 1 ? 0 : bw == 2 ? 1 : 2);
++  device.phy_set_bb_reg(0x0c20, 1u << 31, wide ? 0 : 1);
++  device.phy_set_bb_reg(0x0e20, 1u << 31, wide ? 0 : 1);
++}
++} // namespace jaguar2

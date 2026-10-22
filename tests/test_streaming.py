@@ -9,6 +9,7 @@ import sys
 import tempfile
 import tracemalloc
 import unittest
+import zlib
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'airdrop'))
 import streaming
@@ -97,5 +98,64 @@ class StreamingTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, 'stop before bind'):
                     service.serve(SimpleNamespace(address='fe80::123', sid='test'))
             self.assertEqual(data.read_bytes(), b'active transfer')
+
+    def test_likely_complete_accepts_only_a_whole_dvzip_archive(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'clip.bin'
+            path.write_bytes(os.urandom(300 * 1024) + b'PulseDrop text\n' * 20000)
+            with tempfile.TemporaryFile() as body:
+                streaming.prepare(path, body)
+                whole = body.seek(0, 2)
+                self.assertTrue(streaming.likely_complete(body))
+                self.assertEqual(body.tell(), whole)
+                # every proper block boundary and a mid-block cut are incomplete
+                body.seek(0); data = body.read()
+                position, cuts = 0, []
+                while position < len(data):
+                    size = struct.unpack('>I', data[position:position + 4])[0] & 0x7fffffff
+                    position += 4 + size
+                    cuts.append(position)
+                for cut in cuts[:-1] + [len(data) - 1, len(data) // 2]:
+                    self.assertFalse(streaming.likely_complete(io.BytesIO(data[:cut])), cut)
+                self.assertFalse(streaming.likely_complete(io.BytesIO(data + b'\0\0\0\1x')))
+        single = encode_dvzip([('a.txt', b'one block')])
+        self.assertTrue(streaming.likely_complete(single))
+        self.assertTrue(streaming.likely_complete(io.BytesIO(single)))
+        self.assertFalse(streaming.likely_complete(single[:-3]))
+        zipped = gzip.compress(encode_cpio([('g.txt', b'gzip')]))
+        self.assertTrue(streaming.likely_complete(io.BytesIO(zipped)))
+        self.assertFalse(streaming.likely_complete(io.BytesIO(zipped[:-4])))
+
+    def test_likely_complete_ignores_trailer_name_inside_file_data(self):
+        payload = b'x' * 1000 + b'TRAILER!!!\x00' + b'\0' * 32
+        archive = encode_cpio([('fake.bin', payload)])
+        cut = archive.index(payload) + len(payload)  # block ends right after the fake name
+        stored = lambda data: (0x80000000 | len(data)).to_bytes(4, 'big') + data
+        first = stored(archive[:cut])
+        self.assertFalse(streaming.likely_complete(io.BytesIO(first)))
+        whole = first + stored(archive[cut:])
+        self.assertTrue(streaming.likely_complete(io.BytesIO(whole)))
+        self.assertTrue(streaming.complete(io.BytesIO(whole)))
+
+    def test_likely_complete_memory_is_bounded_for_a_large_compressed_block(self):
+        archive = encode_cpio([('big.txt', b'PulseDrop text line\n' * (32 * 1024 * 1024 // 20))])
+        data = zlib.compress(archive)
+        body = io.BytesIO(len(data).to_bytes(4, 'big') + data)
+        tracemalloc.start()
+        try:
+            self.assertTrue(streaming.likely_complete(body))
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        self.assertLess(peak, 4 * 1024 * 1024)
+
+    def test_likely_complete_stops_a_compression_bomb_at_the_archive_limit(self):
+        # A valid archive that expands far past its compressed size: accepted
+        # under the real limit, rejected once decoding passes a lower one.
+        bomb = zlib.compress(encode_cpio([('zeros.bin', b'\0' * (8 * 1024 * 1024))]), 9)
+        body = io.BytesIO(len(bomb).to_bytes(4, 'big') + bomb)
+        self.assertTrue(streaming.likely_complete(body))
+        with patch.object(streaming, 'MAX_ARCHIVE_BYTES', 1024 * 1024):
+            self.assertFalse(streaming.likely_complete(body))
 
 if __name__=='__main__': unittest.main()

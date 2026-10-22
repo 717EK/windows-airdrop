@@ -140,7 +140,7 @@ sealed class Session
             var profile = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(ProfileFile))!;
             Name = CleanName(profile["name"]);
             if (Models.Any(m => m.Model == profile["model"])) Model = profile["model"];
-            FasterSending = profile.GetValueOrDefault("fasterSending") == "true";
+            CompatibleSending = profile.GetValueOrDefault("compatibleSending") == "true";
             MatchChannel = profile.GetValueOrDefault("matchChannel") == "true";
         }
         catch (Exception e) when (e is IOException or JsonException or KeyNotFoundException or ArgumentException) { }
@@ -306,7 +306,9 @@ sealed class Session
     public string Name { get; private set; } = "Windows PC";
     public string ActiveName { get; private set; } = "Windows PC"; // the name the running receiver advertises
     public string Model { get; private set; } = "MacBookPro18,3";
-    public bool FasterSending { get; private set; }
+    // Unicast data (mostly TCP ACKs while receiving) goes out at 54 Mbit/s; at 12 Mbit/s the
+    // ACKs took most of the phone's time on our channel. Compatible sending falls back to 12.
+    public bool CompatibleSending { get; private set; }
     // Retune between 149 and 36 to follow where the phone actually spends its AWDL slots.
     public bool MatchChannel { get; private set; }
     static string ProfileFile => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PulseDrop", "profile.json");
@@ -316,7 +318,7 @@ sealed class Session
         if (!Models.Any(m => m.Model == model)) throw new ArgumentException("Unknown device icon.");
         Name = CleanName(name); Model = model;
         Directory.CreateDirectory(Path.GetDirectoryName(ProfileFile)!);
-        File.WriteAllText(ProfileFile, JsonSerializer.Serialize(new Dictionary<string, string> { ["name"] = Name, ["model"] = Model, ["fasterSending"] = FasterSending ? "true" : "false", ["matchChannel"] = MatchChannel ? "true" : "false" }));
+        File.WriteAllText(ProfileFile, JsonSerializer.Serialize(new Dictionary<string, string> { ["name"] = Name, ["model"] = Model, ["compatibleSending"] = CompatibleSending ? "true" : "false", ["matchChannel"] = MatchChannel ? "true" : "false" }));
         Changed?.Invoke();
     }
 
@@ -326,13 +328,13 @@ sealed class Session
         lock (sync) try { if (receiver is { HasExited: false }) { receiver.StandardInput.WriteLine(json); receiver.StandardInput.Flush(); } } catch (IOException) { }
     }
 
-    public void SetFasterSending(bool enabled)
+    public void SetCompatibleSending(bool enabled)
     {
         if (Running || Working) throw new InvalidOperationException("Stop receiving before changing the radio speed.");
-        bool previous = FasterSending;
-        FasterSending = enabled;
+        bool previous = CompatibleSending;
+        CompatibleSending = enabled;
         try { SaveProfile(Name, Model); }
-        catch { FasterSending = previous; throw; }
+        catch { CompatibleSending = previous; throw; }
     }
 
     public void SetMatchChannel(bool enabled)
@@ -365,7 +367,7 @@ sealed class Session
                 ?? throw new IOException("awdl0 is missing. Complete the TAP adapter setup first.");
             (Address, Sid) = Identity(adapter.GetPhysicalAddress().GetAddressBytes());
             IfIndex = adapter.GetIPProperties().GetIPv6Properties()!.Index;
-            Diagnostic("session", new { version = typeof(Session).Assembly.GetName().Version?.ToString(), Address, IfIndex, MatchChannel, FasterSending, python = Python });
+            Diagnostic("session", new { version = typeof(Session).Assembly.GetName().Version?.ToString(), Address, IfIndex, MatchChannel, CompatibleSending, python = Python });
             StartupStage("bridge pipe");
             stopFile = Path.Combine(LogDirectory, "stop.request");
             string pipe = @"\\.\pipe\pulsedrop-" + Guid.NewGuid().ToString("N");
@@ -383,7 +385,7 @@ sealed class Session
             }
             if (!available) throw new IOException("The radio bridge did not become ready.");
             StartupStage("radio initialization");
-            link = Launch(Engine("awdl_link.exe"), [pipe, "149", "3600", "--fixed", .. (MatchChannel ? new[] { "--match-channel" } : []), "--data-rate", FasterSending ? "24" : "12", "--tap", "awdl0", "--probe", "--service-port", "8771", "--stop-file", stopFile], "link", true);
+            link = Launch(Engine("awdl_link.exe"), [pipe, "149", "3600", "--fixed", .. (MatchChannel ? new[] { "--match-channel" } : []), "--data-rate", CompatibleSending ? "12" : "54", "--tap", "awdl0", "--probe", "--service-port", "8771", "--stop-file", stopFile], "link", true);
             await AwaitReadyAsync(linkReady.Task, link, startupStage, TimeSpan.FromSeconds(55), cancel.Token);
             StartupStage("TAP IPv6 address");
             bool addressReady = false;

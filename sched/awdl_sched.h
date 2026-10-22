@@ -10,6 +10,7 @@
 #include "radio.h"
 #include "state.h"
 #include "circular_buffer.h"
+#include "ba_reorder.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -31,6 +32,22 @@ struct awdl_sched {
 	void *deliver_ctx;
 	struct buf *unicast[AWDL_UNICAST_QUEUE];
 	unsigned unicast_count;
+	/* A newer pure TCP ACK replaces a queued, unsent one of the same flow, at most
+	 * ack_merge_limit times per queued ACK (0 = unbounded); duplicates never merge.
+	 * awdl_link turns it on with limit 1, which at most halves the ACK count. */
+	bool ack_merge;
+	unsigned ack_merge_limit, acks_merged;
+	uint8_t unicast_merges[AWDL_UNICAST_QUEUE];
+	unsigned addba_answered; /* ADDBA Requests answered, including explicit declines */
+	bool rx_aggregation; /* experimental: enable only for traced throughput comparisons */
+	bool listen_only; /* awdl_link --listen: never transmit, not even ADDBA responses */
+	bool vht80; /* advertise VHT capabilities; set from the bridge's confirmed 80 MHz tune */
+	struct ba_reorder ba; /* receive reordering for the accepted Block Ack session */
+	struct ether_addr ba_peer;
+	unsigned ba_tid, bar_seen, delba_seen;
+	uint8_t ba_token; /* dialog token of the accepted ADDBA, to recognise retransmits */
+	struct ether_addr receive_peer;
+	uint64_t receive_peer_seen; /* last large IPv6 unicast delivered to this node */
 	cbuf_handle_t tx_queue_multicast;
 	/* Absolute due times in us, AWDL_SCHED_IDLE when not armed. */
 	uint64_t due_chan, due_psf, due_mif, due_peers, due_unicast, due_multicast;
@@ -71,8 +88,8 @@ struct awdl_chan_match {
 	int gave_up; /* a move away stopped helping: stay home for the rest of the session */
 };
 
-/* Count the slots that valid peers advertise on each candidate channel.
- * Returns how many peers contributed. */
+/* Count only the active bulk sender's slots, never unrelated nearby devices.
+ * Returns 1 for a validated sender heard within 5 s, otherwise 0. */
 int awdl_sched_count_slots(struct awdl_sched *s, const unsigned *candidates, int n, int *slots);
 
 /* One matching decision. Returns the channel to retune to, or 0 to stay. */
