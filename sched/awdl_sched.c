@@ -613,22 +613,35 @@ static int answer_addba(struct awdl_sched *s, const uint8_t *frame, int len) {
 	unsigned reply = (params & 1) | 2 /* immediate Block Ack */ | (tid << 2) | (buffer << 6);
 	/* Aggregation stalled physical transfers; decline until explicitly tested. */
 	int accepted = s->rx_aggregation && (params & 2);
+	/* One reorder session only: while it is active, decline another peer or
+	 * TID (status 37) rather than silently dropping the first agreement's
+	 * state while its sender still aggregates. A retransmitted request for the
+	 * current session (same peer, TID and dialog token) is answered again
+	 * without rewinding the window. */
+	bool same_session = s->ba.active && !memcmp(&peer, &s->ba_peer, sizeof peer) && tid == s->ba_tid;
+	if (accepted && s->ba.active && !same_session)
+		accepted = 0;
+	bool restart = accepted && !(same_session && token == s->ba_token);
 	uint8_t resp[9] = {3, 1, token, accepted ? 0 : 37, 0, (uint8_t) reply, (uint8_t) (reply >> 8), 0, 0};
 	memcpy(out + n, resp, sizeof resp);
 	n += sizeof resp;
 	radio_send(s, out, n);
 	s->addba_answered++;
-	if (accepted) {
+	if (restart) {
 		/* Starting Sequence Control follows the 2-byte timeout. */
 		uint16_t ssn = (uint16_t) ((body[7] | body[8] << 8) >> 4);
 		ba_reorder_stop(&s->ba, ba_release, s);
 		ba_reorder_start(&s->ba, ssn, buffer);
 		s->ba_peer = peer;
 		s->ba_tid = tid;
+		s->ba_token = token;
 	}
 	/* printf: the desktop captures the link's stdout, OWL's log_info does not reach it. */
 	printf("ADDBA request from %s tid %u buffer %u: %s with buffer %u\n", ether_ntoa(&peer), tid,
-	       params >> 6, accepted ? "accepted" : "declined (experimental RX aggregation off)", buffer);
+	       params >> 6,
+	       accepted ? (restart ? "accepted" : "accepted again (retransmit, window kept)")
+	                : s->rx_aggregation ? "declined (another session active)" : "declined (experimental RX aggregation off)",
+	       buffer);
 	fflush(stdout);
 	return 1;
 }

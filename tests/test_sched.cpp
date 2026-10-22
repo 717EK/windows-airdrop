@@ -429,6 +429,34 @@ TEST_F(Sim, addba_declined_by_default_and_accepted_only_in_experimental_mode) {
     EXPECT_EQ(a.radio.sent.size(), before + 2);
 }
 
+TEST_F(Sim, active_block_ack_session_declines_other_peers_and_keeps_window_on_retransmit) {
+    auto &a = add(); auto &b = add(); auto &c = add();
+    a.s.rx_aggregation = true;
+    auto addba = [&](auto &from, uint8_t tid, uint8_t token, uint16_t ssn) {
+        unsigned params = 2 | (tid << 2) | (64 << 6);
+        uint16_t sc = ssn << 4;
+        std::vector<uint8_t> f = {0, 0, 8, 0, 0, 0, 0, 0, 0xd0, 0, 0, 0};
+        f.insert(f.end(), (uint8_t *) &a.addr, (uint8_t *) &a.addr + 6);
+        f.insert(f.end(), (uint8_t *) &from.addr, (uint8_t *) &from.addr + 6);
+        f.insert(f.end(), {0, 0x25, 0, 0xff, 0x94, 0x73, 0, 0,
+                           3, 0, token, (uint8_t) params, (uint8_t) (params >> 8), 0, 0, (uint8_t) sc, (uint8_t) (sc >> 8)});
+        EXPECT_EQ(awdl_sched_radio_rx(&a.s, f.data(), f.size()), RX_OK);
+        const auto &resp = a.radio.sent.back();
+        size_t rt = resp[2] | resp[3] << 8;
+        return resp[rt + 24 + 3]; // status
+    };
+    EXPECT_EQ(addba(b, 0, 1, 1), 0);
+    EXPECT_EQ(a.s.ba.head, 1);
+    EXPECT_EQ(addba(b, 0, 1, 50), 0); // retransmit: answered, window kept
+    EXPECT_EQ(a.s.ba.head, 1);
+    EXPECT_EQ(addba(c, 0, 7, 9), 37); // another peer while active
+    EXPECT_EQ(addba(b, 3, 2, 9), 37); // another TID while active
+    EXPECT_EQ(memcmp(&a.s.ba_peer, &b.addr, 6), 0);
+    EXPECT_EQ(a.s.ba_tid, 0u);
+    EXPECT_EQ(addba(b, 0, 4, 20), 0); // new agreement from the same peer and TID restarts
+    EXPECT_EQ(a.s.ba.head, 20);
+}
+
 TEST_F(Sim, accepted_block_ack_session_reorders_data_and_honours_bar_and_delba) {
     auto &a = add(); auto &b = add();
     a.s.rx_aggregation = true;

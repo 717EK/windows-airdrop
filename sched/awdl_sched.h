@@ -37,6 +37,7 @@ struct awdl_sched {
 	struct ba_reorder ba; /* receive reordering for the accepted Block Ack session */
 	struct ether_addr ba_peer;
 	unsigned ba_tid, bar_seen, delba_seen;
+	uint8_t ba_token; /* dialog token of the accepted ADDBA, to recognise retransmits */
 	struct ether_addr receive_peer;
 	uint64_t receive_peer_seen; /* last large IPv6 unicast delivered to this node */
 	cbuf_handle_t tx_queue_multicast;
