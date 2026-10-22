@@ -44,9 +44,17 @@ int main(int argc, char **argv) {
     fprintf(stderr, "radio bridge waiting on %s\n", argv[1]);
     if (!ConnectNamedPipe(pipe, nullptr) && GetLastError() != ERROR_PIPE_CONNECTED) { CloseHandle(pipe); return 1; }
     auto logger = std::make_shared<Logger>();
-    // Per-packet informational logging can block the USB event thread on a full stderr pipe.
-    // Logger left at its defaults: quieting it (set_level Warn + events().disable())
-    // coincided with the radio receiving nothing on 2026-10-19; keep verbose until explained.
+    // Per-frame logging blocks the bridge: devourer writes a "bulk_send ... OK" info line and a
+    // tx.report JSON event for every frame sent (~245k lines / 26 MB per transfer session),
+    // and the desktop reads this pipe line by line, so the bridge stalled on writes and the
+    // phone's TCP ACKs queued for 25-80 ms. Quiet by default; --trace keeps everything.
+    // Events go to NUL rather than events().disable(): the earlier quieting that disabled
+    // them coincided with the radio receiving nothing (2026-10-19, not isolated).
+    if (!trace) {
+        logger->set_level(Logger::Level::Warn);
+        if (FILE *nul = fopen("NUL", "w"))
+            logger->events().configure(nul, devourer::EventSink::FlushPolicy::Never);
+    }
     devourer::DeviceSession session{logger};
     std::thread rx;
     std::atomic<bool> rx_failed{false};
