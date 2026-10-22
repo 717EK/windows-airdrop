@@ -142,13 +142,20 @@ def _block_tail(source, start):
         return exact(source, left - skip)
     decoder = zlib.decompressobj(15)
     tail = b''
+    decoded = 0
+    def keep(chunk):
+        nonlocal tail, decoded
+        decoded += len(chunk)
+        if decoded > MAX_ARCHIVE_BYTES:  # same bound decode() enforces: stop a bomb early
+            raise ValueError('archive exceeds size limit')
+        tail = (tail + chunk)[-TAIL_KEEP:]
     while left:
         data = exact(source, min(BLOCK, left))
         left -= len(data)
         while data:
-            tail = (tail + decoder.decompress(data, BLOCK))[-TAIL_KEEP:]
+            keep(decoder.decompress(data, BLOCK))
             data = decoder.unconsumed_tail
-    tail = (tail + decoder.flush())[-TAIL_KEEP:]
+    keep(decoder.flush())
     if not decoder.eof or decoder.unused_data:
         raise ValueError('incomplete compressed block')
     return tail

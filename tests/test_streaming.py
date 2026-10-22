@@ -149,4 +149,13 @@ class StreamingTests(unittest.TestCase):
             tracemalloc.stop()
         self.assertLess(peak, 4 * 1024 * 1024)
 
+    def test_likely_complete_stops_a_compression_bomb_at_the_archive_limit(self):
+        # A valid archive that expands far past its compressed size: accepted
+        # under the real limit, rejected once decoding passes a lower one.
+        bomb = zlib.compress(encode_cpio([('zeros.bin', b'\0' * (8 * 1024 * 1024))]), 9)
+        body = io.BytesIO(len(bomb).to_bytes(4, 'big') + bomb)
+        self.assertTrue(streaming.likely_complete(body))
+        with patch.object(streaming, 'MAX_ARCHIVE_BYTES', 1024 * 1024):
+            self.assertFalse(streaming.likely_complete(body))
+
 if __name__=='__main__': unittest.main()
